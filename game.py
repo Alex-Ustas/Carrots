@@ -1,23 +1,34 @@
 # TODO:
 #   - InputWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - InputWindow: кнопка удаления данных за дату
+#   - ResultWindow: сортировка кнопок также как win_set
 
 import sys, json, random, os, re
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass, asdict, field
 
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout,
-                             QWidget, QLabel, QPushButton, QComboBox, QRadioButton)
+                             QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea)
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.01 (2026.09)'
+VERSION = '1.02 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
+RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
+WINNINGS_FILE = os.path.join(DATA_DIR, "win_sets.json")
 CARD1_SIZE = 35
 CARD2_SIZE = 54
 
+COLORS = [
+    QColor("#9ac87d"),  # 1 — светло-зелёный
+    QColor("#00b0f0"),  # 2 — голубой #dcfdfd
+    QColor("yellow"),  # 3 — светло-жёлтый #fff9c4
+    QColor("#a0a0a0"),  # 4 — светло-серый
+    QColor("#ffaaaa"),  # 5 — светло-красный
+]
+RESULT_COLOR = QColor("#FFC000")
 
 def is_valid_date(date_str: str) -> bool:
     """Проверяет, что строка в формате dd.mm.yy и является реальной датой."""
@@ -50,6 +61,44 @@ def save_all_data(data: Dict[str, 'TicketSets']):
     ensure_data_dir()
     serialized = [d.to_dict() for d in data.values()]
     with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(serialized, f, ensure_ascii=False, indent=2)
+
+
+def load_all_results() -> Dict[str, 'Result']:
+    ensure_data_dir()
+    if not os.path.exists(RESULTS_FILE):
+        return {}
+    try:
+        with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {r["date"]: Result.from_dict(r) for r in data}
+    except Exception:
+        return {}
+
+
+def save_all_results(data: Dict[str, 'Result']):
+    ensure_data_dir()
+    serialized = [r.to_dict() for r in data.values()]
+    with open(RESULTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(serialized, f, ensure_ascii=False, indent=2)
+
+
+def load_all_winnings() -> Dict[str, 'Winning']:
+    ensure_data_dir()
+    if not os.path.exists(WINNINGS_FILE):
+        return {}
+    try:
+        with open(WINNINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {w["name"]: Winning.from_dict(w) for w in data}
+    except Exception:
+        return {}
+
+
+def save_all_winnings(winnings: List["Winning"]):
+    ensure_data_dir()
+    serialized = [w.to_dict() for w in winnings]
+    with open(WINNINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(serialized, f, ensure_ascii=False, indent=2)
 
 
@@ -120,6 +169,59 @@ class TicketSets:
             return False
 
         return True
+
+
+@dataclass
+class Result:
+    date: str
+    win_set: str
+    first_card_selected: List[int]
+    second_card_selected: Optional[int]
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Result":
+        return cls(date=d["date"],
+                   win_set=d['win_set'],
+                   first_card_selected=d.get("first_card_selected", []),
+                   second_card_selected=d.get("second_card_selected"))
+
+    def to_dict(self) -> dict:
+        return {
+            "date": self.date,
+            "win_set": self.win_set,
+            "first_card_selected": self.first_card_selected,
+            "second_card_selected": self.second_card_selected
+        }
+
+
+@dataclass
+class Winning:
+    name: str
+    cost: int
+    sets: Dict[Tuple[int, int], list]
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Winning":
+        raw_sets = d.get("sets", {})
+        parsed_sets = {}
+        for k, v in raw_sets.items():
+            parsed_sets[cls._parse_key(k)] = v
+        return cls(name=d["name"], cost=d["cost"], sets=parsed_sets)
+
+    def to_dict(self) -> dict:
+        raw_sets = {}
+        for k, v in self.sets.items():
+            raw_sets[self._format_key(k)] = v
+        return {"name": self.name, "cost": self.cost, "sets": raw_sets}
+
+    @staticmethod
+    def _parse_key(key: str) -> Tuple[int, int]:
+        parts = key.split("_")
+        return int(parts[0]), int(parts[1])
+
+    @staticmethod
+    def _format_key(key: Tuple[int, int]) -> str:
+        return f"{key[0]}_{key[1]}"
 
 
 class Label(QLabel):
@@ -199,7 +301,7 @@ class WelcomeWindow(Window):
         self._init_ui()
 
     def _init_ui(self):
-        button_input = Button('Ввод', fixed_height=50)
+        button_input = Button('Билеты', fixed_height=50)
         button_input.clicked.connect(self.open_input_data_window)
         button_results = Button('Результаты', fixed_height=50)
         button_results.clicked.connect(self.open_results_window)
@@ -244,6 +346,9 @@ class CardWidget(QFrame):
         self.total = rows * cols
         self.setStyleSheet("background-color: white; border: 1px solid black;")
 
+        self._bg_colors: List[Optional[QColor]] = [None] * self.total
+        self._borders: List[Optional[str]] = [None] * self.total
+
         layout = QGridLayout()
         layout.setSpacing(2)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -256,35 +361,47 @@ class CardWidget(QFrame):
             self.buttons.append(btn)
             r, c = divmod(i, cols)
             layout.addWidget(btn, r, c)
-            # Скрываем лишние ячейки, если их больше чем active
             if i >= active:
                 btn.setVisible(False)
+
+    def _build_style(self, idx: int) -> str:
+        bg = self._bg_colors[idx]
+        border = self._borders[idx]
+        bg_str = bg.name() if bg else "white"
+        border_str = f"4px solid {border}" if border else "1px solid black"
+        return (f"font-size: 14px; font-weight: bold; color: #203764; "
+                f"border: {border_str}; border-radius: 6px; "
+                f"background-color: {bg_str};")
 
     def set_cell_color(self, idx: int, color: Optional[QColor]):
         if idx < 0 or idx >= self.active:
             return
-        btn = self.buttons[idx]
-        if color is None:
-            change_style(btn, 'background-color', 'white')
-        else:
-            change_style(btn, 'background-color', color.name())
+        self._bg_colors[idx] = color
+        self.buttons[idx].setStyleSheet(self._build_style(idx))
+
+    def set_cell_border(self, idx: int, border_color: Optional[str]):
+        if idx < 0 or idx >= self.active:
+            return
+        self._borders[idx] = border_color
+        self.buttons[idx].setStyleSheet(self._build_style(idx))
+
+    def clear_all_borders(self):
+        for i in range(self.active):
+            self._borders[i] = None
+            self.buttons[i].setStyleSheet(self._build_style(i))
 
 
 class InputWindow(Window):
-    COLORS = [
-        QColor("#a8e6cf"),  # светло-зелёный
-        QColor("#dcfdfd"),  # голубой
-        QColor("#fff9c4"),  # светло-жёлтый
-        QColor("#ffcccc"),  # светло-красный
-        QColor("#a0a0a0"),  # светло-серый
-    ]
-
     def __init__(self):
-        super().__init__('Ввод данных', width=800, height=600)
+        super().__init__('Билеты', width=800, height=600)
         self.all_data: Dict[str, TicketSets] = load_all_data()
         self.current_date: Optional[str] = None
         self.selected_ticket_index = 0
         self.current_set_index = 0
+        self.first_time = True
+
+        self.all_results: Dict[str, Result] = load_all_results()
+        self.excluded_nums = self.calc_top_nums()
 
         # Рабочее состояние: 0 = пусто, 1..5 = цвет (номер билета)
         self.first_card: List[int] = [0] * CARD1_SIZE
@@ -321,7 +438,7 @@ class InputWindow(Window):
 
         # 3. Радиокнопки выбора билета
         self.color_buttons: List[QRadioButton] = []
-        for i, color in enumerate(self.COLORS):
+        for i, color in enumerate(COLORS):
             rb = QRadioButton(f'Билет {i + 1} (0/7 + 0)')
             rb.setAutoExclusive(True)
             rb.setStyleSheet(
@@ -385,15 +502,17 @@ class InputWindow(Window):
     # ── Логика переключения даты и набора ──
 
     def _refresh_dates(self):
-        dates = sorted(self.all_data.keys(), reverse=True)
+        dates = sorted(self.all_data.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(dates)
-        if dates:
+        if dates and not self.first_time:
             self.date_combo.setCurrentIndex(0)
             self.current_date = dates[0]
         else:
             self.current_date = None
+            self.date_combo.setCurrentText('')
+            self.first_time = False
         self.date_combo.blockSignals(False)
         self._load_current_context()
 
@@ -500,6 +619,34 @@ class InputWindow(Window):
 
     # ── Вспомогательные методы UI ──
 
+    def calc_top_nums(self):
+        if len(self.all_results) == 0:
+            return None
+        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
+        nums = [self.all_results[d].second_card_selected for d in dates
+                if self.all_results[d].second_card_selected is not None][:30]
+        if not nums:
+            return None
+        unic_nums = list({n: None for n in nums})
+        nums_dict = {num: 1 if i < 3 else round(1 - (i - 2) * 0.05, 2) if i < 20 else 0.1
+                     for i, num in enumerate(unic_nums)}
+        nums_dict = {k: round(v * nums.count(k), 2) for k, v in nums_dict.items()}
+        top_nums = list(dict(sorted(nums_dict.items(), reverse=True, key=lambda x: x[1])))
+        top_nums = [top_nums[:5], top_nums[5:20]]
+        return top_nums
+
+    def _highlight_excluded_nums(self):
+        """Подсвечивает числа второй карточки: топ-5 — красным, следующие 15 — оранжевым."""
+        if not self.excluded_nums:
+            return
+        print(self.excluded_nums)
+        for idx in self.excluded_nums[0]:
+            if 0 <= idx < CARD2_SIZE:
+                change_style(self.card2.buttons[idx], 'color', 'red')
+        for idx in self.excluded_nums[1]:
+            if 0 <= idx < CARD2_SIZE:
+                change_style(self.card2.buttons[idx], 'color', 'orange')
+
     def _set_color(self, idx: int):
         self.selected_ticket_index = idx
         self._update_radio_buttons()
@@ -512,10 +659,11 @@ class InputWindow(Window):
     def _render_cards(self):
         for i in range(CARD1_SIZE):
             v = self.first_card[i]
-            self.card1.set_cell_color(i, self.COLORS[v - 1] if v > 0 else None)
+            self.card1.set_cell_color(i, COLORS[v - 1] if v > 0 else None)
         for i in range(CARD2_SIZE):
             v = self.second_card[i]
-            self.card2.set_cell_color(i, self.COLORS[v - 1] if v > 0 else None)
+            self.card2.set_cell_color(i, COLORS[v - 1] if v > 0 else None)
+        self._highlight_excluded_nums()
 
     def _update_radio_buttons(self):
         """Обновляет текст на радиокнопках в формате: Билет N (X/7 + Y) и показывает цветом валидность"""
@@ -676,14 +824,334 @@ class InputWindow(Window):
 
 
 class ResultWindow(Window):
-    pass
+    def __init__(self, date: str = ''):
+        super().__init__('Результаты', width=800, height=600)
+        self.all_results: Dict[str, Result] = load_all_results()
+        self.ticket_data: Dict[str, TicketSets] = load_all_data()
+        self.winning_data: Dict[str, Winning] = load_all_winnings()
+        self.current_date: Optional[str] = None
+
+        # Состояние результата: выбранные ячейки
+        self.result_first: set = set()
+        self.result_second: Optional[int] = None
+
+        self._init_ui()
+        if date:
+            self.date_combo.setCurrentText(date)
+
+    def _init_ui(self):
+        main_layout = QHBoxLayout()
+
+        # === Левая панель ===
+        left = QWidget()
+        left_layout = QVBoxLayout()
+        left.setLayout(left_layout)
+
+        # Дата
+        date_row = QHBoxLayout()
+        date_row.addWidget(Label("Дата:"))
+        self.date_combo = ComboList(fixed_width=105, editable=True)
+        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
+        self.date_combo.addItems(dates)
+        self.date_combo.setCurrentText('')
+        self.date_combo.currentTextChanged.connect(self._on_date_changed)
+        date_row.addWidget(self.date_combo)
+        left_layout.addLayout(date_row)
+
+        # Тип выигрыша
+        win_row = QHBoxLayout()
+        win_row.addWidget(Label("Тип выигрыша:"))
+        self.win_combo = ComboList(fixed_width=105)
+        self.win_combo.addItems(self.winning_data.keys())
+        self.win_combo.currentTextChanged.connect(self._on_win_set_changed)
+        win_row.addWidget(self.win_combo)
+        left_layout.addLayout(win_row)
+
+        left_layout.addSpacing(12)
+
+        # Зона с кнопками-совпадениями (прокручиваемая)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFixedWidth(250)
+        scroll_content = QWidget()
+        self.buttons_layout = QVBoxLayout(scroll_content)
+        self.buttons_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        left_layout.addWidget(scroll, stretch=1)
+
+        # Кнопки
+        self.btn_save = Button("Сохранить")
+        self.btn_save.clicked.connect(self.on_save)
+        left_layout.addWidget(self.btn_save)
+
+        self.btn_back = Button("Назад")
+        self.btn_back.clicked.connect(self.open_main_window)
+        left_layout.addWidget(self.btn_back)
+
+        # === Правая панель ===
+        right = QWidget()
+        right_layout = QVBoxLayout()
+        right.setLayout(right_layout)
+
+        self.card1 = CardWidget(rows=4, cols=9, active=CARD1_SIZE)
+        self.card1.cell_clicked.connect(self.on_card1_click)
+        right_layout.addWidget(self.card1)
+
+        right_layout.addStretch()
+
+        self.selected_label = Label('')
+        right_layout.addWidget(self.selected_label)
+
+        self.result_label = Label('')
+        right_layout.addWidget(self.result_label)
+
+        right_layout.addStretch()
+
+        self.card2 = CardWidget(rows=6, cols=9, active=CARD2_SIZE)
+        self.card2.cell_clicked.connect(self.on_card2_click)
+        right_layout.addWidget(self.card2)
+
+        main_layout.addWidget(left, stretch=1)
+        main_layout.addWidget(right, stretch=4)
+        self.setLayout(main_layout)
+
+    # ── Переключение даты ──
+
+    def _on_date_changed(self, text: str):
+        self.current_date = text.strip() if text else None
+        self._load_result()
+        if self.current_date and self.current_date in self.all_results:
+            self.win_combo.setCurrentText(self.all_results[self.current_date].win_set)
+        self._update_labels()
+
+    def _on_win_set_changed(self):
+        self._rebuild_buttons()
+
+    def _load_result(self):
+        self.result_first = set()
+        self.result_second = None
+        self._clear_cards()
+        self._clear_outlines()
+        self._clear_buttons()
+
+        if not self.current_date or self.current_date not in self.all_results:
+            return
+
+        result = self.all_results[self.current_date]
+        self.result_first = set(result.first_card_selected)
+        self.result_second = result.second_card_selected
+        self._render_cards()
+        self._rebuild_buttons()
+
+    # ── Рендеринг карточек ──
+
+    def _clear_cards(self):
+        for i in range(CARD1_SIZE):
+            self.card1.set_cell_color(i, None)
+        for i in range(CARD2_SIZE):
+            self.card2.set_cell_color(i, None)
+
+    def _render_cards(self):
+        for idx in self.result_first:
+            if 0 <= idx < CARD1_SIZE:
+                self.card1.set_cell_color(idx, RESULT_COLOR)
+        if self.result_second is not None and 0 <= self.result_second < CARD2_SIZE:
+            self.card2.set_cell_color(self.result_second, RESULT_COLOR)
+
+    # ── Очистка обводок и кнопок ──
+
+    def _clear_outlines(self):
+        self.card1.clear_all_borders()
+        self.card2.clear_all_borders()
+
+    def _clear_buttons(self):
+        """Удаляет все кнопки-совпадения, оставляя stretch"""
+        while self.buttons_layout.count() > 1:
+            item = self.buttons_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    # ── Клик по карточкам результата ──
+
+    def on_card1_click(self, idx: int):
+        if not (0 <= idx < CARD1_SIZE):
+            return
+
+        self._clear_outlines()
+
+        if idx in self.result_first:
+            self.result_first.remove(idx)
+            self.card1.set_cell_color(idx, None)
+        else:
+            if len(self.result_first) >= 7:
+                QMessageBox.information(self, "Внимание", "Все ячейки уже выбраны!")
+                return
+            self.result_first.add(idx)
+            self.card1.set_cell_color(idx, RESULT_COLOR)
+
+        self._rebuild_buttons()
+
+    def on_card2_click(self, idx: int):
+        if not (0 <= idx < CARD2_SIZE):
+            return
+
+        self._clear_outlines()
+
+        if self.result_second == idx:
+            self.result_second = None
+            self.card2.set_cell_color(idx, None)
+        else:
+            if self.result_second is not None:
+                self.card2.set_cell_color(self.result_second, None)
+            self.result_second = idx
+            self.card2.set_cell_color(idx, RESULT_COLOR)
+
+        self._rebuild_buttons()
+
+    # ── Построение кнопок-совпадений ──
+
+    def _rebuild_buttons(self):
+        self._clear_buttons()
+        self._update_labels()
+
+        if not self.current_date or self.current_date not in self.ticket_data:
+            return
+
+        ts = self.ticket_data[self.current_date]
+        result_first_set = self.result_first
+        result_second = self.result_second
+
+        for set_idx, ticket_set in enumerate(ts.sets):
+            for ticket in ticket_set:
+                # Считаем совпадения
+                ticket_first = set(ticket.first_card_selected)
+                x = len(ticket_first & result_first_set)
+                y = 1 if (ticket.second_card_selected is not None and
+                          ticket.second_card_selected == result_second) else 0
+
+                # Условие: >=2 в первой ИЛИ совпадение во второй
+                if x >= 2 or y >= 1:
+                    color = COLORS[ticket.ticket - 1]
+                    win_result = self.winning_data[self.win_combo.currentText()].sets[(x, y)]
+                    text = f"Набор {set_idx + 1}/билет {ticket.ticket}: {x}+{y}={win_result[0]}{win_result[1]}"
+                    btn = Button(text)
+                    btn.setStyleSheet(
+                        f"font-size: 14px; font-weight: bold; color: #203764; "
+                        f"border: 1px solid #888; border-radius: 4px; "
+                        f"background-color: {color.name()}; padding: 6px;"
+                    )
+                    btn.clicked.connect(lambda _, t=ticket: self._show_ticket_outline(t))
+                    # Вставляем перед stretch
+                    self.buttons_layout.insertWidget(self.buttons_layout.count() - 1, btn)
+
+    def _show_ticket_outline(self, ticket: Ticket):
+        self._clear_outlines()
+        color = COLORS[ticket.ticket - 1].name()
+        for idx in ticket.first_card_selected:
+            if 0 <= idx < CARD1_SIZE:
+                self.card1.set_cell_border(idx, color)
+        if ticket.second_card_selected is not None and 0 <= ticket.second_card_selected < CARD2_SIZE:
+            self.card2.set_cell_border(ticket.second_card_selected, color)
+
+    # ── Текст выбора и результатов ──
+
+    def _update_labels(self):
+        if not self.current_date:
+            self.selected_label.setText('')
+            self.result_label.setText('')
+            return
+
+        self.selected_label.setText(f'Выбрано: {len(self.result_first)}/7 + {int(self.result_second is not None)}')
+        color = 'red' if len(self.result_first) < 7 or self.result_second is None else 'green'
+        change_style(self.selected_label, 'color', color)
+
+        if self.current_date not in self.ticket_data:
+            self.result_label.setText('')
+            return
+
+        win_data = self.winning_data[self.win_combo.currentText()]
+        ts = self.ticket_data[self.current_date]
+
+        valid_count = 0
+        won_m = 0   # сумма в 'м.'
+        won_b = 0   # сумма в 'б.'
+
+        result_first_set = self.result_first
+        result_second = self.result_second
+
+        for ticket_set in ts.sets:
+            for ticket in ticket_set:
+                if not ticket.is_valid():
+                    continue
+                valid_count += 1
+
+                x = len(set(ticket.first_card_selected) & result_first_set)
+                y = 1 if (ticket.second_card_selected is not None and
+                          ticket.second_card_selected == result_second) else 0
+
+                key = (x, y)
+                if key in win_data.sets:
+                    amount, kind = win_data.sets[key]
+                    if kind == 'м.':
+                        won_m += amount
+                    elif kind == 'б.':
+                        won_b += amount
+
+        spent = valid_count * win_data.cost
+        won_text = f'{won_m} м., ' if won_m else ''
+        won_text += f'{won_b} б.' if won_b else ''
+        if won_m or won_b:
+            self.result_label.setText(f'Потрачено: {spent} м., выиграно {won_text.strip(", ")}')
+        else:
+            self.result_label.setText(f'Потрачено: {spent} м.')
+
+    # ── Сохранение ──
+
+    def on_save(self):
+        error_text = []
+        if not self.current_date:
+            error_text = ["Укажите дату!"]
+        if self.current_date and not is_valid_date(self.current_date):
+            error_text.append("Неверный формат даты! Используйте dd.mm.yy")
+        if len(self.result_first) < 7:
+            error_text.append('В первой карточке должно быть выделено 7 ячеек!')
+        if self.result_second is None:
+            error_text.append('Укажите ячейку во второй карточке!')
+        if error_text:
+            QMessageBox.warning(self, "Ошибка", '\n'.join(error_text))
+            return
+
+        result = Result(
+            date=self.current_date,
+            win_set=self.win_combo.currentText(),
+            first_card_selected=sorted(self.result_first),
+            second_card_selected=self.result_second
+        )
+        self.all_results[self.current_date] = result
+        save_all_results(self.all_results)
+
+        # Обновляем список дат в комбо
+        self.date_combo.blockSignals(True)
+        self.date_combo.clear()
+        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True))
+        self.date_combo.setCurrentText(self.current_date)
+        self.date_combo.blockSignals(False)
+
+        QMessageBox.information(self, "Успех", f"Результат сохранён в {RESULTS_FILE}")
+
+    def open_main_window(self):
+        self.window = WelcomeWindow()
+        self.window.show()
+        self.close()
 
 
 def change_style(widget, parameter: str, value: str):
     style = widget.styleSheet()
-    pattern = rf'([^-]\b{parameter}:[ ]?)([#]?\b\w+\b)'
+    pattern = r'(?<!-)\b' + re.escape(parameter) + r'\b(\s*:\s*)[^;]+'
     if re.search(pattern, style):
-        widget.setStyleSheet(re.sub(pattern, rf'\1{value}', style))
+        widget.setStyleSheet(re.sub(pattern, parameter + r'\1' + value, style))
+
 
 # Unhandled exception interceptor
 def excepthook(exc_type, exc_value, tb):
