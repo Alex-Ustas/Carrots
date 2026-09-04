@@ -1,11 +1,8 @@
 # TODO:
 #   - InputWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
-#   - InputWindow: кнопка удаления данных за дату
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
-#   - InputWindow: во второй карте должны отмечаться ячейки зеленым, которые есть в других наборах
 #   - ResultWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - ResultWindow: сортировка кнопок также как win_set
-#   - ResultWindow: кнопка удаления данных за дату
 
 import sys, json, random, os, re
 from datetime import datetime
@@ -17,7 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.03 (2026.09)'
+VERSION = '1.04 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -239,7 +236,7 @@ class Label(QLabel):
 
 
 class Button(QPushButton):
-    def __init__(self, text: str, fixed_width=0, fixed_height=40, icon_size=24):
+    def __init__(self, text: str, fixed_width=0, fixed_height=40, icon_size=16):
         super().__init__()
         self.setText(text)
         self.setStyleSheet("""
@@ -424,10 +421,15 @@ class InputWindow(Window):
 
         # 1. Дата
         date_row = QHBoxLayout()
-        date_row.addWidget(Label("Дата:"))
         self.date_combo = ComboList(fixed_width=100, editable=True)
         self.date_combo.currentTextChanged.connect(self._on_date_changed)
+        btn_delete_date = Button('', fixed_width=30, fixed_height=30)
+        btn_delete_date.setIcon(QIcon('images/delete.png'))
+        btn_delete_date.clicked.connect(self.on_remove_date)
+
+        date_row.addWidget(Label("Дата:"))
         date_row.addWidget(self.date_combo)
+        date_row.addWidget(btn_delete_date)
         left_layout.addLayout(date_row)
 
         # 2. Набор (Set)
@@ -523,6 +525,23 @@ class InputWindow(Window):
     def _on_date_changed(self, text: str):
         self.current_date = text.strip() if text else None
         self._load_current_context()
+
+    def on_remove_date(self):
+        if not self.current_date or self.current_date not in self.all_data:
+            return
+        reply = QMessageBox.question(self, 'Удаление билетов',
+                                     f'Вы действительно хотите удалить все билеты\nза {self.current_date}?',
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        del self.all_data[self.current_date]
+        save_all_data(self.all_data)
+
+        self.date_combo.blockSignals(True)
+        self.date_combo.clear()
+        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+        self.date_combo.blockSignals(False)
+        self.date_combo.setCurrentText('')
 
     def _load_current_context(self):
         """Загружает данные для выбранной даты и набора"""
@@ -764,14 +783,14 @@ class InputWindow(Window):
             self.first_card[idx] = ticket
 
         # --- Отбор свободных ячеек для второй карточки ---
-        # Убираем выбранные в других сетах ячейки
+        # Убираем числа, выбранные в других наборах
         for idx in range(len(self.all_data[self.current_date].sets)):
             if idx != self.current_set_index:
                 second_card_selected = [t.second_card_selected for t in self.all_data[self.current_date].sets[idx]]
                 if len(free2) > len(second_card_selected):
                     free2 = [f for f in free2 if f not in second_card_selected]
 
-        # Убираем ранее выпавшие в результатах ячейки
+        # Убираем числа, ранее выпавшие в результатах
         if len(free2) > len(self.excluded_nums[0]):
             free2 = [f for f in free2 if f not in self.excluded_nums[0]]
             if len(free2) > len(self.excluded_nums[1]):
@@ -882,13 +901,19 @@ class ResultWindow(Window):
 
         # Дата
         date_row = QHBoxLayout()
-        date_row.addWidget(Label("Дата:"))
         self.date_combo = ComboList(fixed_width=105, editable=True)
         dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
         self.date_combo.addItems(dates)
         self.date_combo.setCurrentText('')
         self.date_combo.currentTextChanged.connect(self._on_date_changed)
+
+        btn_delete_date = Button('', fixed_width=30, fixed_height=30)
+        btn_delete_date.setIcon(QIcon('images/delete.png'))
+        btn_delete_date.clicked.connect(self.on_remove_date)
+
+        date_row.addWidget(Label("Дата:"))
         date_row.addWidget(self.date_combo)
+        date_row.addWidget(btn_delete_date)
         left_layout.addLayout(date_row)
 
         # Тип выигрыша
@@ -956,6 +981,23 @@ class ResultWindow(Window):
         if self.current_date and self.current_date in self.all_results:
             self.win_combo.setCurrentText(self.all_results[self.current_date].win_set)
         self._update_labels()
+
+    def on_remove_date(self):
+        if not self.current_date or self.current_date not in self.all_results:
+            return
+        reply = QMessageBox.question(self, 'Удаление результата',
+                                     f'Вы действительно хотите удалить результат\nза {self.current_date}?',
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        del self.all_results[self.current_date]
+        save_all_results(self.all_results)
+
+        self.date_combo.blockSignals(True)
+        self.date_combo.clear()
+        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+        self.date_combo.blockSignals(False)
+        self.date_combo.setCurrentText('')
 
     def _on_win_set_changed(self):
         self._rebuild_buttons()
@@ -1164,10 +1206,9 @@ class ResultWindow(Window):
         self.all_results[self.current_date] = result
         save_all_results(self.all_results)
 
-        # Обновляем список дат в комбо
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
-        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True))
+        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
