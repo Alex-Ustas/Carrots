@@ -1,7 +1,11 @@
 # TODO:
 #   - InputWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - InputWindow: кнопка удаления данных за дату
+#   - InputWindow: при сохранении дата и набор не должны сбрасываться
+#   - InputWindow: во второй карте должны отмечаться ячейки зеленым, которые есть в других наборах
+#   - ResultWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - ResultWindow: сортировка кнопок также как win_set
+#   - ResultWindow: кнопка удаления данных за дату
 
 import sys, json, random, os, re
 from datetime import datetime
@@ -13,7 +17,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.02 (2026.09)'
+VERSION = '1.03 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -522,7 +526,6 @@ class InputWindow(Window):
 
     def _load_current_context(self):
         """Загружает данные для выбранной даты и набора"""
-        self.current_set_index = 0
         self.combo_set.clear()
 
         if self.combo_set.count() == 0:
@@ -636,16 +639,27 @@ class InputWindow(Window):
         return top_nums
 
     def _highlight_excluded_nums(self):
-        """Подсвечивает числа второй карточки: топ-5 — красным, следующие 15 — оранжевым."""
+        """Подсвечивает числа второй карточки: топ-5 — красным, следующие 15 — оранжевым"""
         if not self.excluded_nums:
             return
-        print(self.excluded_nums)
         for idx in self.excluded_nums[0]:
             if 0 <= idx < CARD2_SIZE:
                 change_style(self.card2.buttons[idx], 'color', 'red')
         for idx in self.excluded_nums[1]:
             if 0 <= idx < CARD2_SIZE:
                 change_style(self.card2.buttons[idx], 'color', 'orange')
+
+    def _highlight_already_selected_nums(self):
+        """Подсвечивает числа второй карточки зеленым, если число уже выбрано в другом наборе"""
+        if (not self.current_date or
+                self.current_date not in self.all_data or
+                len(self.all_data[self.current_date].sets) < 2):
+            return
+        for idx in range(len(self.all_data[self.current_date].sets)):
+            if idx != self.current_set_index:
+                for num in [t.second_card_selected for t in self.all_data[self.current_date].sets[idx]]:
+                    if 0 <= num < CARD2_SIZE:
+                        change_style(self.card2.buttons[num], 'color', 'green')
 
     def _set_color(self, idx: int):
         self.selected_ticket_index = idx
@@ -664,6 +678,7 @@ class InputWindow(Window):
             v = self.second_card[i]
             self.card2.set_cell_color(i, COLORS[v - 1] if v > 0 else None)
         self._highlight_excluded_nums()
+        self._highlight_already_selected_nums()
 
     def _update_radio_buttons(self):
         """Обновляет текст на радиокнопках в формате: Билет N (X/7 + Y) и показывает цветом валидность"""
@@ -727,9 +742,6 @@ class InputWindow(Window):
     # ── Генерация ──
 
     def _generator(self, ticket: int):
-        if not self._check_validity():
-            return
-
         # Очистить только текущий цвет
         self.first_card = [0 if v == ticket else v for v in self.first_card]
         self.second_card = [0 if v == ticket else v for v in self.second_card]
@@ -750,6 +762,21 @@ class InputWindow(Window):
 
         for idx in random.sample(free1, 7):
             self.first_card[idx] = ticket
+
+        # --- Отбор свободных ячеек для второй карточки ---
+        # Убираем выбранные в других сетах ячейки
+        for idx in range(len(self.all_data[self.current_date].sets)):
+            if idx != self.current_set_index:
+                second_card_selected = [t.second_card_selected for t in self.all_data[self.current_date].sets[idx]]
+                if len(free2) > len(second_card_selected):
+                    free2 = [f for f in free2 if f not in second_card_selected]
+
+        # Убираем ранее выпавшие в результатах ячейки
+        if len(free2) > len(self.excluded_nums[0]):
+            free2 = [f for f in free2 if f not in self.excluded_nums[0]]
+            if len(free2) > len(self.excluded_nums[1]):
+                free2 = [f for f in free2 if f not in self.excluded_nums[1]]
+
         self.second_card[random.choice(free2)] = ticket
 
         self._render_cards()
@@ -757,10 +784,16 @@ class InputWindow(Window):
         self._sync_to_data()
 
     def on_generate(self):
+        if not self._check_validity():
+            return
+        self._sync_to_data()
         self._generator(self.selected_ticket_index + 1)
 
     def on_generate_all(self):
+        if not self._check_validity():
+            return
         self._clear_cards()
+        self._sync_to_data()
         for i in range(1, 6):
             self._generator(i)
 
@@ -1034,7 +1067,7 @@ class ResultWindow(Window):
                 if x >= 2 or y >= 1:
                     color = COLORS[ticket.ticket - 1]
                     win_result = self.winning_data[self.win_combo.currentText()].sets[(x, y)]
-                    text = f"Набор {set_idx + 1}/билет {ticket.ticket}: {x}+{y}={win_result[0]}{win_result[1]}"
+                    text = f"Набор {set_idx + 1}/билет {ticket.ticket}: {x}+{y}={win_result[0]:,d}{win_result[1]}"
                     btn = Button(text)
                     btn.setStyleSheet(
                         f"font-size: 14px; font-weight: bold; color: #203764; "
@@ -1099,12 +1132,12 @@ class ResultWindow(Window):
                         won_b += amount
 
         spent = valid_count * win_data.cost
-        won_text = f'{won_m} м., ' if won_m else ''
-        won_text += f'{won_b} б.' if won_b else ''
+        won_text = f'{won_m:,d} м., ' if won_m else ''
+        won_text += f'{won_b:,d} б.' if won_b else ''
         if won_m or won_b:
-            self.result_label.setText(f'Потрачено: {spent} м., выиграно {won_text.strip(", ")}')
+            self.result_label.setText(f'Потрачено: {spent:,d} м., выиграно {won_text.strip(", ")}')
         else:
-            self.result_label.setText(f'Потрачено: {spent} м.')
+            self.result_label.setText(f'Потрачено: {spent:,d} м.')
 
     # ── Сохранение ──
 

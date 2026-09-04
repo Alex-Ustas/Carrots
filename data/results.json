@@ -376,5 +376,19 @@
       32
     ],
     "second_card_selected": 2
+  },
+  {
+    "date": "03.09.26",
+    "win_set": "Пакет 45-1",
+    "first_card_selected": [
+      3,
+      7,
+      14,
+      17,
+      25,
+      30,
+      34
+    ],
+    "second_card_selected": 46
   }
 ]
