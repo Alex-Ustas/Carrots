@@ -3,6 +3,7 @@
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
 #   - ResultWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - ResultWindow: сортировка кнопок также как win_set
+#   - Создать окно для работы с win_sets.json
 
 import sys, json, random, os, re
 from datetime import datetime
@@ -14,7 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.04 (2026.09)'
+VERSION = '1.05 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -117,6 +118,7 @@ class Ticket:
 @dataclass
 class TicketSets:
     date: str  # dd.mm.yy
+    win_set: str
     sets: List[List[Ticket]] = field(default_factory=list)
 
     @classmethod
@@ -124,13 +126,13 @@ class TicketSets:
         sets = []
         for s in d.get("sets", []):
             sets.append([Ticket(**t) for t in s])
-        return cls(date=d["date"], sets=sets)
+        return cls(date=d["date"], win_set=d['win_set'], sets=sets)
 
     def to_dict(self) -> dict:
         sets_serialized = []
         for s in self.sets:
             sets_serialized.append([asdict(t) for t in s])
-        return {"date": self.date, "sets": sets_serialized}
+        return {"date": self.date, 'win_set': self.win_set, "sets": sets_serialized}
 
     def get_current_tickets(self, set_index: int) -> List[Ticket]:
         if 0 <= set_index < len(self.sets):
@@ -396,6 +398,7 @@ class InputWindow(Window):
     def __init__(self):
         super().__init__('Билеты', width=800, height=600)
         self.all_data: Dict[str, TicketSets] = load_all_data()
+        self.winning_data: Dict[str, Winning] = load_all_winnings()
         self.current_date: Optional[str] = None
         self.selected_ticket_index = 0
         self.current_set_index = 0
@@ -437,12 +440,32 @@ class InputWindow(Window):
         set_row.addWidget(Label("Набор:"))
         self.combo_set = ComboList(fixed_width=100)
         self.combo_set.currentIndexChanged.connect(self._on_set_changed)
+
+        btn_add_set = Button("", fixed_width=30, fixed_height=30)
+        btn_add_set.setIcon(QIcon('images/add.png'))
+        btn_add_set.clicked.connect(self.on_add_set)
+
+        btn_delete_set = Button("", fixed_width=30, fixed_height=30)
+        btn_delete_set.setIcon(QIcon('images/delete.png'))
+        btn_delete_set.clicked.connect(self.on_remove_set)
+
         set_row.addWidget(self.combo_set)
+        set_row.addWidget(btn_add_set)
+        set_row.addWidget(btn_delete_set)
         left_layout.addLayout(set_row)
+
+        # 3. Схема призов
+        win_row = QHBoxLayout()
+        win_row.addWidget(Label("Схема призов:"))
+        self.win_combo = ComboList(fixed_width=105)
+        self.win_combo.addItems(self.winning_data.keys())
+        self.win_combo.currentTextChanged.connect(self._on_win_set_changed)
+        win_row.addWidget(self.win_combo)
+        left_layout.addLayout(win_row)
 
         left_layout.addSpacing(12)
 
-        # 3. Радиокнопки выбора билета
+        # 4. Радиокнопки выбора билета
         self.color_buttons: List[QRadioButton] = []
         for i, color in enumerate(COLORS):
             rb = QRadioButton(f'Билет {i + 1} (0/7 + 0)')
@@ -458,18 +481,12 @@ class InputWindow(Window):
 
         left_layout.addSpacing(12)
 
-        # 4. Кнопки управления
+        # 5. Кнопки управления
         self.btn_generate = Button("Генерировать")
         self.btn_generate.clicked.connect(self.on_generate)
 
         self.btn_generate_all = Button("Генерировать все")
         self.btn_generate_all.clicked.connect(self.on_generate_all)
-
-        self.btn_add_set = Button("Добавить набор")
-        self.btn_add_set.clicked.connect(self.on_add_set)
-
-        self.btn_remove_set = Button("Удалить набор")
-        self.btn_remove_set.clicked.connect(self.on_remove_set)
 
         self.btn_save_set = Button("Сохранить")
         self.btn_save_set.clicked.connect(self.on_save)
@@ -479,10 +496,7 @@ class InputWindow(Window):
 
         left_layout.addWidget(self.btn_generate)
         left_layout.addWidget(self.btn_generate_all)
-        left_layout.addWidget(self.btn_add_set)
-        left_layout.addWidget(self.btn_remove_set)
         left_layout.addWidget(self.btn_save_set)
-        left_layout.addStretch()
         left_layout.addWidget(self.btn_back)
 
         # === Правая панель ===
@@ -539,12 +553,12 @@ class InputWindow(Window):
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
-        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+        self.date_combo.addItems(sorted(self.all_data.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
         self.date_combo.setCurrentText('')
 
     def _load_current_context(self):
-        """Загружает данные для выбранной даты и набора"""
+        """Загружает данные для выбранной даты, набора и выигрышей"""
         self.combo_set.clear()
 
         if self.combo_set.count() == 0:
@@ -557,6 +571,13 @@ class InputWindow(Window):
             return
 
         data = self.all_data[self.current_date]
+
+        # Устанавливаем схему выигрыша
+        win_set_name = data.win_set
+        if win_set_name not in self.winning_data:
+            self.winning_data[win_set_name] = Winning(name=win_set_name, cost=0, sets={})
+            self.win_combo.addItem(win_set_name)
+        self.win_combo.setCurrentText(win_set_name)
 
         # Заполняем комбобокс наборами
         if data.sets:
@@ -576,6 +597,10 @@ class InputWindow(Window):
             self.current_set_index = index
             self._apply_set_data(index)
             self._update_radio_buttons()
+
+    def _on_win_set_changed(self):
+        if self.current_date and self.current_date in self.all_data:
+            self.all_data[self.current_date].win_set = self.win_combo.currentText()
 
     def _apply_set_data(self, set_idx: int):
         data = self.all_data[self.current_date]
@@ -603,7 +628,7 @@ class InputWindow(Window):
             return
 
         if self.current_date not in self.all_data:
-            self.all_data[self.current_date] = TicketSets(date=self.current_date)
+            self.all_data[self.current_date] = TicketSets(date=self.current_date, win_set=self.win_combo.currentText())
 
         self.all_data[self.current_date].add_empty_set()
 
@@ -822,7 +847,7 @@ class InputWindow(Window):
             return
 
         if self.current_date not in self.all_data:
-            self.all_data[self.current_date] = TicketSets(date=self.current_date)
+            self.all_data[self.current_date] = TicketSets(date=self.current_date, win_set=self.win_combo.currentText())
 
         data = self.all_data[self.current_date]
 
@@ -916,9 +941,9 @@ class ResultWindow(Window):
         date_row.addWidget(btn_delete_date)
         left_layout.addLayout(date_row)
 
-        # Тип выигрыша
+        # Схема призов
         win_row = QHBoxLayout()
-        win_row.addWidget(Label("Тип выигрыша:"))
+        win_row.addWidget(Label("Схема призов:"))
         self.win_combo = ComboList(fixed_width=105)
         self.win_combo.addItems(self.winning_data.keys())
         self.win_combo.currentTextChanged.connect(self._on_win_set_changed)
