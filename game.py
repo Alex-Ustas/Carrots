@@ -1,7 +1,6 @@
 # TODO:
 #   - InputWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
-#   - ResultWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - ResultWindow: сортировка кнопок также как win_set
 #   - Создать окно для работы с win_sets.json
 
@@ -196,6 +195,14 @@ class Result:
             "second_card_selected": self.second_card_selected
         }
 
+    def is_valid(self) -> bool:
+        if (is_valid_date(self.date) and
+                self.win_set and
+                self.second_card_selected and
+                len(self.first_card_selected) == 7):
+            return True
+        return False
+
 
 @dataclass
 class Winning:
@@ -267,7 +274,7 @@ class CardButton(QPushButton):
 
 
 class ComboList(QComboBox):
-    def __init__(self, fixed_width=0, fixed_height=30, editable=False, max_len=0):
+    def __init__(self, fixed_width=0, fixed_height=30, editable=False, date_mask=False):
         super().__init__()
         self.setStyleSheet('color: #203764; font-size: 16px')
         self.setMaxVisibleItems(10)
@@ -276,8 +283,8 @@ class ComboList(QComboBox):
             self.setFixedWidth(fixed_width)
         if fixed_height:
             self.setFixedHeight(fixed_height)
-        if bool(max_len) and editable:
-            self.lineEdit().setMaxLength(max_len)
+        if date_mask:
+            self.lineEdit().setInputMask('99.99.99;_')
 
 
 class Window(QWidget):
@@ -426,7 +433,7 @@ class InputWindow(Window):
 
         # 1. Дата
         date_row = QHBoxLayout()
-        self.date_combo = ComboList(fixed_width=100, editable=True, max_len=8)
+        self.date_combo = ComboList(fixed_width=100, editable=True, date_mask=True)
         self.date_combo.currentTextChanged.connect(self._on_date_changed)
         btn_delete_date = Button('', fixed_width=30, fixed_height=30)
         btn_delete_date.setIcon(QIcon('images/delete.png'))
@@ -928,7 +935,7 @@ class ResultWindow(Window):
 
         # Дата
         date_row = QHBoxLayout()
-        self.date_combo = ComboList(fixed_width=105, editable=True, max_len=8)
+        self.date_combo = ComboList(fixed_width=105, editable=True, date_mask=True)
         dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
         self.date_combo.addItems(dates)
         self.date_combo.setCurrentText('')
@@ -1003,12 +1010,15 @@ class ResultWindow(Window):
     # ── Переключение даты ──
 
     def _on_date_changed(self, text: str):
-        self.current_date = text.strip() if text else None
+        new_date = text.strip() if text else None
+        old_date = self.current_date
+        self.current_date = new_date
+        self.check_changes(old_date)
         self._load_result()
-        if self.current_date and self.current_date in self.all_results:
-            self.win_combo.setCurrentText(self.all_results[self.current_date].win_set)
-        if self.current_date and self.current_date in self.ticket_data:
-            self.win_combo.setCurrentText(self.ticket_data[self.current_date].win_set)
+        if new_date and new_date in self.all_results:
+            self.win_combo.setCurrentText(self.all_results[new_date].win_set)
+        if new_date and new_date in self.ticket_data:
+            self.win_combo.setCurrentText(self.ticket_data[new_date].win_set)
             self.win_combo.setEnabled(False)
         else:
             self.win_combo.setEnabled(True)
@@ -1029,6 +1039,7 @@ class ResultWindow(Window):
         self.date_combo.clear()
         self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
+        self.current_date = None
         self.date_combo.setCurrentText('')
 
     def _on_win_set_changed(self):
@@ -1215,12 +1226,12 @@ class ResultWindow(Window):
 
     # ── Сохранение ──
 
-    def on_save(self):
+    def on_save(self, date: str = None):
         error_text = []
         if not self.current_date:
             error_text = ["Укажите дату!"]
         if self.current_date and not is_valid_date(self.current_date):
-            error_text.append("Неверный формат даты! Используйте dd.mm.yy")
+            error_text.append("Некорректная дата! Используйте dd.mm.yy")
         if len(self.result_first) < 7:
             error_text.append('В первой карточке должно быть выделено 7 ячеек!')
         if self.result_second is None:
@@ -1229,13 +1240,14 @@ class ResultWindow(Window):
             QMessageBox.warning(self, "Ошибка", '\n'.join(error_text))
             return
 
+        save_date = date or self.current_date
         result = Result(
-            date=self.current_date,
+            date=save_date,
             win_set=self.win_combo.currentText(),
             first_card_selected=sorted(self.result_first),
             second_card_selected=self.result_second
         )
-        self.all_results[self.current_date] = result
+        self.all_results[save_date] = result
         save_all_results(self.all_results)
 
         self.date_combo.blockSignals(True)
@@ -1246,7 +1258,28 @@ class ResultWindow(Window):
 
         QMessageBox.information(self, "Успех", f"Результат сохранён в {RESULTS_FILE}")
 
+    def check_changes(self, old_date: str):
+        """Проверка на несохраненные изменения"""
+        reply = None
+        date = old_date
+        win_set = self.win_combo.currentText()
+        first_result = sorted(list(self.result_first))
+        second_result = self.result_second
+        result = Result(date, win_set, first_result, second_result)
+        if old_date and old_date in self.all_results:
+            if self.all_results[old_date] != result:
+                reply = QMessageBox.question(self, 'Данные изменены',
+                                             f'Есть изменения в данных!\nСохранить изменения перед продолжением?',
+                                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        elif result.is_valid():
+            reply = QMessageBox.question(self, 'Новый результат не сохранен',
+                                         f'Новый результат может быть потерян!\nСохранить результат перед продолжением?',
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.on_save(old_date)
+
     def open_main_window(self):
+        self.check_changes(self.current_date)
         self.window = WelcomeWindow()
         self.window.show()
         self.close()
