@@ -267,7 +267,7 @@ class CardButton(QPushButton):
 
 
 class ComboList(QComboBox):
-    def __init__(self, fixed_width=0, fixed_height=30, editable=False):
+    def __init__(self, fixed_width=0, fixed_height=30, editable=False, max_len=0):
         super().__init__()
         self.setStyleSheet('color: #203764; font-size: 16px')
         self.setMaxVisibleItems(10)
@@ -276,6 +276,8 @@ class ComboList(QComboBox):
             self.setFixedWidth(fixed_width)
         if fixed_height:
             self.setFixedHeight(fixed_height)
+        if bool(max_len) and editable:
+            self.lineEdit().setMaxLength(max_len)
 
 
 class Window(QWidget):
@@ -424,7 +426,7 @@ class InputWindow(Window):
 
         # 1. Дата
         date_row = QHBoxLayout()
-        self.date_combo = ComboList(fixed_width=100, editable=True)
+        self.date_combo = ComboList(fixed_width=100, editable=True, max_len=8)
         self.date_combo.currentTextChanged.connect(self._on_date_changed)
         btn_delete_date = Button('', fixed_width=30, fixed_height=30)
         btn_delete_date.setIcon(QIcon('images/delete.png'))
@@ -926,7 +928,7 @@ class ResultWindow(Window):
 
         # Дата
         date_row = QHBoxLayout()
-        self.date_combo = ComboList(fixed_width=105, editable=True)
+        self.date_combo = ComboList(fixed_width=105, editable=True, max_len=8)
         dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
         self.date_combo.addItems(dates)
         self.date_combo.setCurrentText('')
