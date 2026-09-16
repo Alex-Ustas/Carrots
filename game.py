@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.05 (2026.09)'
+VERSION = '1.06 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -1005,6 +1005,11 @@ class ResultWindow(Window):
         self._load_result()
         if self.current_date and self.current_date in self.all_results:
             self.win_combo.setCurrentText(self.all_results[self.current_date].win_set)
+        if self.current_date and self.current_date in self.ticket_data:
+            self.win_combo.setCurrentText(self.ticket_data[self.current_date].win_set)
+            self.win_combo.setEnabled(False)
+        else:
+            self.win_combo.setEnabled(True)
         self._update_labels()
 
     def on_remove_date(self):
