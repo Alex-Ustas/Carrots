@@ -1,6 +1,5 @@
 # TODO:
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
-#   - ResultWindow: сортировка кнопок также как win_set
 #   - Создать окно для работы с win_sets.json
 
 import sys, json, random, os, re
@@ -14,7 +13,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.07 (2026.09)'
+VERSION = '1.08 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -1173,29 +1172,42 @@ class ResultWindow(Window):
         ts = self.ticket_data[self.current_date]
         result_first_set = self.result_first
         result_second = self.result_second
+        win_scheme = self.winning_data[self.win_combo.currentText()]
 
+        # Индексы ключей в схеме выигрышей: чем больше индекс — тем ценнее
+        win_keys = list(win_scheme.sets.keys())
+        win_index = {key: i for i, key in enumerate(win_keys)}
+
+        # 1. Собираем выигрышные билеты с индексом выигрыша
+        winners = []  # (win_idx, set_idx, ticket, x, y, win_result)
         for set_idx, ticket_set in enumerate(ts.sets):
             for ticket in ticket_set:
-                # Считаем совпадения
                 ticket_first = set(ticket.first_card_selected)
                 x = len(ticket_first & result_first_set)
                 y = 1 if (ticket.second_card_selected is not None and
                           ticket.second_card_selected == result_second) else 0
 
-                # Условие: >=2 в первой ИЛИ совпадение во второй
                 if x >= 2 or y >= 1:
-                    color = COLORS[ticket.ticket - 1]
-                    win_result = self.winning_data[self.win_combo.currentText()].sets[(x, y)]
-                    text = f"Набор {set_idx + 1}/билет {ticket.ticket}: {x}+{y}={win_result[0]:,d}{win_result[1]}"
-                    btn = Button(text)
-                    btn.setStyleSheet(
-                        f"font-size: 14px; font-weight: bold; color: #203764; "
-                        f"border: 1px solid #888; border-radius: 4px; "
-                        f"background-color: {color.name()}; padding: 6px;"
-                    )
-                    btn.clicked.connect(lambda _, t=ticket: self._show_ticket_outline(t))
-                    # Вставляем перед stretch
-                    self.buttons_layout.insertWidget(self.buttons_layout.count() - 1, btn)
+                    win_result = win_scheme.sets[(x, y)]
+                    idx = win_index[(x, y)]
+                    winners.append((idx, set_idx, ticket, x, y, win_result))
+
+        # 2. Сортируем: по убыванию индекса (ценнее — выше), при равенстве — исходный порядок
+        winners.sort(key=lambda w: w[0], reverse=True)
+
+        # 3. Создаём кнопки
+        for _, set_idx, ticket, x, y, win_result in winners:
+            color = COLORS[ticket.ticket - 1]
+            text = (f"Набор {set_idx + 1}/билет {ticket.ticket}: "
+                    f"{x}+{y}={win_result[0]:,d}{win_result[1]}")
+            btn = Button(text)
+            btn.setStyleSheet(
+                f"font-size: 14px; font-weight: bold; color: #203764; "
+                f"border: 1px solid #888; border-radius: 4px; "
+                f"background-color: {color.name()}; padding: 6px;"
+            )
+            btn.clicked.connect(lambda _, t=ticket: self._show_ticket_outline(t))
+            self.buttons_layout.insertWidget(self.buttons_layout.count() - 1, btn)
 
     def _show_ticket_outline(self, ticket: Ticket):
         self._clear_outlines()

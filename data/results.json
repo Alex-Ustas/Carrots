@@ -432,5 +432,19 @@
       34
     ],
     "second_card_selected": 13
+  },
+  {
+    "date": "17.09.26",
+    "win_set": "Схема 40-2",
+    "first_card_selected": [
+      0,
+      1,
+      9,
+      13,
+      17,
+      20,
+      34
+    ],
+    "second_card_selected": 2
   }
 ]

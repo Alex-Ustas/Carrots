@@ -4198,5 +4198,145 @@
         }
       ]
     ]
+  },
+  {
+    "date": "21.09.26",
+    "win_set": "Схема 45-4",
+    "sets": [
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            1,
+            4,
+            18,
+            21,
+            24,
+            26,
+            29
+          ],
+          "second_card_selected": 16
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            0,
+            6,
+            8,
+            16,
+            17,
+            25,
+            33
+          ],
+          "second_card_selected": 49
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            2,
+            11,
+            13,
+            15,
+            22,
+            27,
+            28
+          ],
+          "second_card_selected": 10
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            3,
+            5,
+            10,
+            19,
+            20,
+            30,
+            32
+          ],
+          "second_card_selected": 18
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            7,
+            9,
+            12,
+            14,
+            23,
+            31,
+            34
+          ],
+          "second_card_selected": 37
+        }
+      ],
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            2,
+            13,
+            16,
+            21,
+            22,
+            24,
+            33
+          ],
+          "second_card_selected": 23
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            0,
+            3,
+            9,
+            19,
+            27,
+            30,
+            32
+          ],
+          "second_card_selected": 39
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            5,
+            8,
+            11,
+            20,
+            26,
+            28,
+            31
+          ],
+          "second_card_selected": 33
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            1,
+            6,
+            10,
+            12,
+            17,
+            29,
+            34
+          ],
+          "second_card_selected": 45
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            4,
+            7,
+            14,
+            15,
+            18,
+            23,
+            25
+          ],
+          "second_card_selected": 28
+        }
+      ]
+    ]
   }
 ]
