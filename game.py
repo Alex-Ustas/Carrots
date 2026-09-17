@@ -1,5 +1,4 @@
 # TODO:
-#   - InputWindow: при выходе или смене даты сравнивать введенные данные с сохраненными и если отличается, то предложить сохранить
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
 #   - ResultWindow: сортировка кнопок также как win_set
 #   - Создать окно для работы с win_sets.json
@@ -8,13 +7,14 @@ import sys, json, random, os, re
 from datetime import datetime
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass, asdict, field
+from copy import deepcopy
 
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout,
                              QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea)
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.06 (2026.09)'
+VERSION = '1.07 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -412,6 +412,7 @@ class InputWindow(Window):
         self.selected_ticket_index = 0
         self.current_set_index = 0
         self.first_time = True
+        self.original_data = None
 
         self.all_results: Dict[str, Result] = load_all_results()
         self.excluded_nums = self.calc_top_nums()
@@ -546,7 +547,10 @@ class InputWindow(Window):
         self._load_current_context()
 
     def _on_date_changed(self, text: str):
-        self.current_date = text.strip() if text else None
+        new_date = text.strip() if text else None
+        old_date = self.current_date
+        self.current_date = new_date
+        self.check_changes(old_date)
         self._load_current_context()
 
     def on_remove_date(self):
@@ -564,6 +568,7 @@ class InputWindow(Window):
         self.date_combo.clear()
         self.date_combo.addItems(sorted(self.all_data.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
+        self.current_date = None
         self.date_combo.setCurrentText('')
 
     def _load_current_context(self):
@@ -600,6 +605,12 @@ class InputWindow(Window):
             self._clear_cards()
 
         self._update_radio_buttons()
+
+        # Делаем снапшот
+        if self.current_date and self.current_date in self.all_data:
+            self.original_data = deepcopy(self.all_data[self.current_date])
+        else:
+            self.original_data = None
 
     def _on_set_changed(self, index: int):
         if self.current_date and self.current_date in self.all_data:
@@ -788,7 +799,7 @@ class InputWindow(Window):
             QMessageBox.warning(self, "Ошибка", "Укажите дату!")
             return False
         if not is_valid_date(self.current_date):
-            QMessageBox.warning(self, "Ошибка", "Неверный формат даты! Используйте dd.mm.yy")
+            QMessageBox.warning(self, "Ошибка", "Некорректная дата! Используйте dd.mm.yy")
             return False
         return True
 
@@ -877,33 +888,56 @@ class InputWindow(Window):
 
     # ── Сохранение ──
 
-    def on_save(self):
+    def on_save(self, date: str = None):
         if not self._check_validity():
             return
 
-        data = self.all_data[self.current_date]
+        save_date = date or self.current_date
+        data = self.all_data[save_date]
 
         if not data.is_valid():
             errors = []
             if not is_valid_date(data.date):
-                errors.append("Неверный формат даты.")
+                errors.append("Некорректная дата.")
             for i, s in enumerate(data.sets[:-1]):
                 if not data.is_set_full(s):
                     errors.append(f"Набор {i+1} заполнен не полностью (нужно 5 валидных билетов).")
             if not any(t.is_valid() for t in data.sets[-1]):
                 errors.append("В последнем наборе нет ни одного валидного билета, заполненного 7+1.")
-            msg = "\n".join(errors)
-            QMessageBox.warning(self, "Ошибка валидации", msg)
+            QMessageBox.warning(self, "Ошибка валидации", '\n'.join(errors))
             return
 
         save_all_data(self.all_data)
-        self._refresh_dates()
-        # Восстанавливаем выбранную дату и набор
+
+        self.date_combo.blockSignals(True)
+        self.date_combo.clear()
+        self.date_combo.addItems(sorted(self.all_data.keys(), reverse=True,
+                                        key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.setCurrentText(self.current_date)
+        self.date_combo.blockSignals(False)
+
         self.combo_set.setCurrentIndex(self.current_set_index)
+
+        # Обновляем снапшот только если сохранили именно текущую дату
+        if save_date == self.current_date and self.current_date in self.all_data:
+            self.original_data = deepcopy(self.all_data[self.current_date])
+
         QMessageBox.information(self, 'Успешно', f'Данные сохранены в {DATA_FILE}')
 
+    def check_changes(self, old_date: str):
+        """Проверка на несохраненные изменения"""
+        if not old_date or old_date not in self.all_data:
+            return
+
+        if self.all_data[old_date] != self.original_data:
+            reply = QMessageBox.question(self, 'Данные изменены',
+                                         f'Есть изменения в данных!\nСохранить изменения перед продолжением?',
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                self.on_save(old_date)
+
     def open_main_window(self):
+        self.check_changes(self.current_date)
         self.window = WelcomeWindow()
         self.window.show()
         self.close()
