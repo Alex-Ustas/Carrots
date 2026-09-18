@@ -1,5 +1,6 @@
 # TODO:
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
+#   - InputWindow: добавить ограничение: нельзя создать набор, если текущий не заполнен
 #   - Создать окно для работы с win_sets.json
 
 import sys, json, random, os, re
@@ -9,11 +10,11 @@ from dataclasses import dataclass, asdict, field
 from copy import deepcopy
 
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout,
-                             QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea)
+                             QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea, QSpinBox)
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.08 (2026.09)'
+VERSION = '1.09 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -29,6 +30,7 @@ COLORS = [
     QColor("#ffaaaa"),  # 5 — светло-красный
 ]
 RESULT_COLOR = QColor("#FFC000")
+
 
 def is_valid_date(date_str: str) -> bool:
     """Проверяет, что строка в формате dd.mm.yy и является реальной датой."""
@@ -116,6 +118,7 @@ class Ticket:
 @dataclass
 class TicketSets:
     date: str  # dd.mm.yy
+    cost: int
     win_set: str
     sets: List[List[Ticket]] = field(default_factory=list)
 
@@ -124,13 +127,13 @@ class TicketSets:
         sets = []
         for s in d.get("sets", []):
             sets.append([Ticket(**t) for t in s])
-        return cls(date=d["date"], win_set=d['win_set'], sets=sets)
+        return cls(date=d["date"], cost=d['cost'], win_set=d['win_set'], sets=sets)
 
     def to_dict(self) -> dict:
         sets_serialized = []
         for s in self.sets:
             sets_serialized.append([asdict(t) for t in s])
-        return {"date": self.date, 'win_set': self.win_set, "sets": sets_serialized}
+        return {"date": self.date, 'cost': self.cost, 'win_set': self.win_set, "sets": sets_serialized}
 
     def get_current_tickets(self, set_index: int) -> List[Ticket]:
         if 0 <= set_index < len(self.sets):
@@ -155,11 +158,14 @@ class TicketSets:
         """
         Валидация по правилам:
         1. Дата в формате dd.mm.yy.
-        2. Есть хотя бы один набор.
-        3. Все наборы кроме последнего — полные (5 валидных билетов).
-        4. В последнем наборе есть хотя бы один валидный билет.
+        2. Стоимость > 0
+        3. Есть хотя бы один набор.
+        4. Все наборы кроме последнего — полные (5 валидных билетов).
+        5. В последнем наборе есть хотя бы один валидный билет.
         """
         if not is_valid_date(self.date):
+            return False
+        if not self.cost:
             return False
         if not self.sets:
             return False
@@ -206,7 +212,6 @@ class Result:
 @dataclass
 class Winning:
     name: str
-    cost: int
     sets: Dict[Tuple[int, int], list]
 
     @classmethod
@@ -215,13 +220,13 @@ class Winning:
         parsed_sets = {}
         for k, v in raw_sets.items():
             parsed_sets[cls._parse_key(k)] = v
-        return cls(name=d["name"], cost=d["cost"], sets=parsed_sets)
+        return cls(name=d["name"], sets=parsed_sets)
 
     def to_dict(self) -> dict:
         raw_sets = {}
         for k, v in self.sets.items():
             raw_sets[self._format_key(k)] = v
-        return {"name": self.name, "cost": self.cost, "sets": raw_sets}
+        return {"name": self.name, "sets": raw_sets}
 
     @staticmethod
     def _parse_key(key: str) -> Tuple[int, int]:
@@ -284,6 +289,20 @@ class ComboList(QComboBox):
             self.setFixedHeight(fixed_height)
         if date_mask:
             self.lineEdit().setInputMask('99.99.99;_')
+
+
+class EditSpin(QSpinBox):
+    def __init__(self, fixed_width=0, fixed_height=30, maximum=1000, step=5):
+        super().__init__()
+        self.setStyleSheet('color: #203764; font-size: 16px; font-weight: bold')
+        if fixed_width:
+            self.setFixedWidth(fixed_width)
+        if fixed_height:
+            self.setFixedHeight(fixed_height)
+        if maximum:
+            self.setMaximum(maximum)
+        if step:
+            self.setSingleStep(step)
 
 
 class Window(QWidget):
@@ -513,13 +532,28 @@ class InputWindow(Window):
         right_layout = QVBoxLayout()
         right.setLayout(right_layout)
 
-        # Карточки
+        # Карточка 1
         self.card1 = CardWidget(rows=4, cols=9, active=CARD1_SIZE)
         self.card1.cell_clicked.connect(self.on_card1_click)
         right_layout.addWidget(self.card1)
 
         right_layout.addStretch()
 
+        # Стоимость
+        cost_row = QHBoxLayout()
+        cost_row.addWidget(Label('Цена билета'))
+        self.cost_spin = EditSpin(fixed_width=50)
+        self.cost_spin.textChanged.connect(self._on_cost_changed)
+        cost_row.addWidget(self.cost_spin)
+        cost_row.addSpacing(20)
+        self.total_cost_label = Label('Общая стоимость = 0')
+        cost_row.addWidget(self.total_cost_label)
+        cost_row.addStretch()
+        right_layout.addLayout(cost_row)
+
+        right_layout.addStretch()
+
+        # Карточка 2
         self.card2 = CardWidget(rows=6, cols=9, active=CARD2_SIZE)
         self.card2.cell_clicked.connect(self.on_card2_click)
         right_layout.addWidget(self.card2)
@@ -565,13 +599,16 @@ class InputWindow(Window):
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
-        self.date_combo.addItems(sorted(self.all_data.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+        self.date_combo.addItems(
+            sorted(self.all_data.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
 
     def _load_current_context(self):
-        """Загружает данные для выбранной даты, набора и выигрышей"""
+        """Загружает данные для выбранной даты, набора, стоимости и выигрышей"""
+        self.combo_set.blockSignals(True)
+        self.cost_spin.blockSignals(True)
         self.combo_set.clear()
 
         if self.combo_set.count() == 0:
@@ -581,6 +618,9 @@ class InputWindow(Window):
             # Пустая дата
             self._clear_cards()
             self._update_radio_buttons()
+            self._update_cost()
+            self.combo_set.blockSignals(False)
+            self.cost_spin.blockSignals(False)
             return
 
         data = self.all_data[self.current_date]
@@ -588,7 +628,7 @@ class InputWindow(Window):
         # Устанавливаем схему выигрыша
         win_set_name = data.win_set
         if win_set_name not in self.winning_data:
-            self.winning_data[win_set_name] = Winning(name=win_set_name, cost=0, sets={})
+            self.winning_data[win_set_name] = Winning(name=win_set_name, sets={})
             self.win_combo.addItem(win_set_name)
         self.win_combo.setCurrentText(win_set_name)
 
@@ -603,7 +643,10 @@ class InputWindow(Window):
         else:
             self._clear_cards()
 
+        self.combo_set.blockSignals(False)
+        self.cost_spin.blockSignals(False)
         self._update_radio_buttons()
+        self._update_cost()
 
         # Делаем снапшот
         if self.current_date and self.current_date in self.all_data:
@@ -620,6 +663,11 @@ class InputWindow(Window):
     def _on_win_set_changed(self):
         if self.current_date and self.current_date in self.all_data:
             self.all_data[self.current_date].win_set = self.win_combo.currentText()
+
+    def _on_cost_changed(self):
+        if self.current_date and self.current_date in self.all_data:
+            self.all_data[self.current_date].cost = self.cost_spin.value()
+        self._update_total_cost_text()
 
     def _apply_set_data(self, set_idx: int):
         data = self.all_data[self.current_date]
@@ -647,7 +695,9 @@ class InputWindow(Window):
             return
 
         if self.current_date not in self.all_data:
-            self.all_data[self.current_date] = TicketSets(date=self.current_date, win_set=self.win_combo.currentText())
+            self.all_data[self.current_date] = TicketSets(date=self.current_date,
+                                                          win_set=self.win_combo.currentText(),
+                                                          cost=0)
 
         self.all_data[self.current_date].add_empty_set()
 
@@ -656,6 +706,7 @@ class InputWindow(Window):
         last_idx = len(self.all_data[self.current_date].sets) - 1
         self.combo_set.setCurrentIndex(last_idx)
         self.current_set_index = last_idx
+        self._update_total_cost_text()
 
     def on_remove_set(self):
         if not self.current_date or self.current_date not in self.all_data:
@@ -672,6 +723,8 @@ class InputWindow(Window):
             data.sets[0] = []
             self._clear_cards()
             self._update_radio_buttons()
+            self._update_total_cost_text()
+            self.original_data = deepcopy(data)
             return
 
         # Удаляем текущий набор
@@ -682,6 +735,8 @@ class InputWindow(Window):
         self._load_current_context()  # Полная перезагрузка комбо
         self.combo_set.setCurrentIndex(new_index)
         self.current_set_index = new_index
+        self._update_total_cost_text()
+        self.original_data = deepcopy(self.all_data[self.current_date])
 
     # ── Вспомогательные методы UI ──
 
@@ -749,10 +804,31 @@ class InputWindow(Window):
             ticket = ticket_idx + 1
             c1 = sum(1 for v in self.first_card if v == ticket)
             c2 = sum(1 for v in self.second_card if v == ticket)
-            text = f"Билет {ticket_idx+1} ({c1}/7 + {c2})"
+            text = f"Билет {ticket_idx + 1} ({c1}/7 + {c2})"
             self.color_buttons[ticket_idx].setText(text)
             color = 'green' if c1 + c2 == 8 else 'red'
             change_style(self.color_buttons[ticket_idx], 'color', color)
+
+    def _update_cost(self):
+        """Обновляет данные по стоимости"""
+        if self.current_date and self.current_date in self.all_data:
+            self.cost_spin.setValue(self.all_data[self.current_date].cost)
+        else:
+            self.cost_spin.setValue(0)
+        self._update_total_cost_text()
+
+    def _update_total_cost_text(self):
+        cost = self.calculate_total_cost()
+        self.total_cost_label.setText(f'Общая стоимость = {cost}')
+
+    def calculate_total_cost(self) -> int:
+        if not self.current_date or self.current_date not in self.all_data:
+            return 0
+        cost = self.cost_spin.value()
+        tickets = 0
+        for s in self.all_data[self.current_date].sets:
+            tickets += sum([1 for t in s if t.is_valid()])
+        return cost * tickets
 
     # ── Клик по первой карточке ──
 
@@ -773,6 +849,7 @@ class InputWindow(Window):
         self._render_cards()
         self._update_radio_buttons()
         self._sync_to_data()
+        self._update_total_cost_text()
 
     # ── Клик по второй карточке ──
 
@@ -792,6 +869,7 @@ class InputWindow(Window):
         self._render_cards()
         self._update_radio_buttons()
         self._sync_to_data()
+        self._update_total_cost_text()
 
     def _check_validity(self) -> bool:
         if not self.current_date:
@@ -851,6 +929,7 @@ class InputWindow(Window):
             return
         self._sync_to_data()
         self._generator(self.selected_ticket_index + 1)
+        self._update_total_cost_text()
 
     def on_generate_all(self):
         if not self._check_validity():
@@ -859,6 +938,7 @@ class InputWindow(Window):
         self._sync_to_data()
         for i in range(1, 6):
             self._generator(i)
+        self._update_total_cost_text()
 
     def _sync_to_data(self):
         """Записывает текущее состояние карточек в self.all_data"""
@@ -866,7 +946,9 @@ class InputWindow(Window):
             return
 
         if self.current_date not in self.all_data:
-            self.all_data[self.current_date] = TicketSets(date=self.current_date, win_set=self.win_combo.currentText())
+            self.all_data[self.current_date] = TicketSets(date=self.current_date,
+                                                          win_set=self.win_combo.currentText(),
+                                                          cost=0)
 
         data = self.all_data[self.current_date]
 
@@ -900,9 +982,11 @@ class InputWindow(Window):
                 errors.append("Некорректная дата.")
             for i, s in enumerate(data.sets[:-1]):
                 if not data.is_set_full(s):
-                    errors.append(f"Набор {i+1} заполнен не полностью (нужно 5 валидных билетов).")
+                    errors.append(f"Набор {i + 1} заполнен не полностью (нужно 5 валидных билетов).")
             if not any(t.is_valid() for t in data.sets[-1]):
-                errors.append("В последнем наборе нет ни одного валидного билета, заполненного 7+1.")
+                errors.append("В последнем наборе не все билеты заполнены 7+1.")
+            if not data.cost:
+                errors.append('Укажите цену билетов.')
             QMessageBox.warning(self, "Ошибка валидации", '\n'.join(errors))
             return
 
@@ -1070,7 +1154,8 @@ class ResultWindow(Window):
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
-        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+        self.date_combo.addItems(
+            sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
@@ -1238,8 +1323,8 @@ class ResultWindow(Window):
         ts = self.ticket_data[self.current_date]
 
         valid_count = 0
-        won_m = 0   # сумма в 'м.'
-        won_b = 0   # сумма в 'б.'
+        won_m = 0  # сумма в 'м.'
+        won_b = 0  # сумма в 'б.'
 
         result_first_set = self.result_first
         result_second = self.result_second
@@ -1262,7 +1347,7 @@ class ResultWindow(Window):
                     elif kind == 'б.':
                         won_b += amount
 
-        spent = valid_count * win_data.cost
+        spent = valid_count * ts.cost
         won_text = f'{won_m:,d} м., ' if won_m else ''
         won_text += f'{won_b:,d} б.' if won_b else ''
         if won_m or won_b:
@@ -1298,7 +1383,8 @@ class ResultWindow(Window):
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
-        self.date_combo.addItems(sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+        self.date_combo.addItems(
+            sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
