@@ -1,6 +1,5 @@
 # TODO:
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
-#   - InputWindow: при удалении сета не срабатывает защита от выхода без сохранения
 #   - Создать окно для работы с win_sets.json
 
 import sys, json, random, os, re
@@ -14,7 +13,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal
 
-VERSION = '1.09 (2026.09)'
+VERSION = '1.10 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -753,6 +752,7 @@ class InputWindow(Window):
 
         # Удаляем текущий набор
         data.remove_set(self.current_set_index)
+        tmp = deepcopy(self.original_data)  # сохраняем состояние до удаления
 
         # Обновляем UI
         new_index = min(self.current_set_index, len(data.sets) - 1)
@@ -760,7 +760,7 @@ class InputWindow(Window):
         self.combo_set.setCurrentIndex(new_index)
         self.current_set_index = new_index
         self._update_total_cost_text()
-        self.original_data = deepcopy(self.all_data[self.current_date])
+        self.original_data = tmp  # фиксируем отсутствие удаления в оригинале
 
     # ── Вспомогательные методы UI ──
 
