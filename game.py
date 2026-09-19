@@ -4,7 +4,7 @@
 #   - Создать окно для работы с win_sets.json
 
 import sys, json, random, os, re
-from datetime import datetime
+from datetime import datetime as dt
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass, asdict, field
 from copy import deepcopy
@@ -49,7 +49,7 @@ def is_valid_date(date_str: str) -> bool:
     if not date_str:
         return False
     try:
-        datetime.strptime(date_str, "%d.%m.%y")
+        dt.strptime(date_str, "%d.%m.%y")
         return True
     except ValueError:
         return False
@@ -577,7 +577,7 @@ class InputWindow(Window):
     # ── Логика переключения даты и набора ──
 
     def _refresh_dates(self):
-        dates = sorted(self.all_data.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.all_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(dates)
@@ -595,6 +595,7 @@ class InputWindow(Window):
         new_date = text.strip() if text else None
         old_date = self.current_date
         self.current_date = new_date
+        self.excluded_nums = self.calc_top_nums()
         self.check_changes(old_date)
         self._load_current_context()
 
@@ -612,7 +613,7 @@ class InputWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.all_data.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+            sorted(self.all_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
@@ -763,10 +764,12 @@ class InputWindow(Window):
 
     # ── Вспомогательные методы UI ──
 
-    def calc_top_nums(self):
+    def calc_top_nums(self) -> Optional[List[List[int]]]:
         if len(self.all_results) == 0:
             return None
-        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        cur_date = self.current_date if is_valid_date(self.current_date) else dt.now().strftime('%d.%m.%y')
+        dates = list(filter(lambda d: dt.strptime(d, '%d.%m.%y') < dt.strptime(cur_date, '%d.%m.%y'), dates))
         nums = [self.all_results[d].second_card_selected for d in dates
                 if self.all_results[d].second_card_selected is not None][:30]
         if not nums:
@@ -1018,7 +1021,7 @@ class InputWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(sorted(self.all_data.keys(), reverse=True,
-                                        key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+                                        key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
@@ -1076,7 +1079,7 @@ class ResultWindow(Window):
         # Дата
         date_row = QHBoxLayout()
         self.date_combo = ComboList(fixed_width=105, editable=True, date_mask=True)
-        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
         self.date_combo.addItems(dates)
         self.date_combo.setCurrentText('')
         self.date_combo.currentTextChanged.connect(self._on_date_changed)
@@ -1178,7 +1181,7 @@ class ResultWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+            sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
@@ -1407,7 +1410,7 @@ class ResultWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.all_results.keys(), reverse=True, key=lambda d: datetime.strptime(d, '%d.%m.%y')))
+            sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
