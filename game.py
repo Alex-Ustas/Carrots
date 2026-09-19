@@ -1,6 +1,6 @@
 # TODO:
 #   - InputWindow: при сохранении дата и набор не должны сбрасываться
-#   - InputWindow: добавить ограничение: нельзя создать набор, если текущий не заполнен
+#   - InputWindow: при удалении сета не срабатывает защита от выхода без сохранения
 #   - Создать окно для работы с win_sets.json
 
 import sys, json, random, os, re
@@ -30,6 +30,18 @@ COLORS = [
     QColor("#ffaaaa"),  # 5 — светло-красный
 ]
 RESULT_COLOR = QColor("#FFC000")
+
+
+def choose_plural(amount: int, declensions: Tuple[str, str, str]) -> str:
+    """Show the number of subjects in the corresponding declension"""
+    if amount % 10 == 1 and amount % 100 != 11:
+        return f'{amount} {declensions[0]}'
+    elif (amount % 10 == 2 and amount % 100 != 12 or
+          amount % 10 == 3 and amount % 100 != 13 or
+          amount % 10 == 4 and amount % 100 != 14):
+        return f'{amount} {declensions[1]}'
+    else:
+        return f'{amount} {declensions[2]}'
 
 
 def is_valid_date(date_str: str) -> bool:
@@ -698,6 +710,17 @@ class InputWindow(Window):
             self.all_data[self.current_date] = TicketSets(date=self.current_date,
                                                           win_set=self.win_combo.currentText(),
                                                           cost=0)
+
+        # Проверка, что последний набор полностью заполнен
+        data = self.all_data[self.current_date].sets[-1]
+        sets = len(self.all_data[self.current_date].sets)
+        tickets = sum([1 for t in data if t.is_valid()])
+        if tickets < 5:
+            tickets = choose_plural(tickets, ('билет', 'билета', 'билетов'))
+            QMessageBox.warning(self, "Ошибка",
+                                "Сначала заполните полностью все 5 билетов в последнем наборе!"
+                                f"\nСейчас в наборе {sets} полностью заполнено всего {tickets}.")
+            return
 
         self.all_data[self.current_date].add_empty_set()
 
