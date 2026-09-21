@@ -1,6 +1,5 @@
 # TODO:
-#   - InputWindow: при сохранении дата и набор не должны сбрасываться
-#   - Создать окно для работы с win_sets.json
+#   - TicketWindow: при сохранении дата и набор не должны сбрасываться
 
 import sys, json, random, os, re
 from datetime import datetime as dt
@@ -8,18 +7,24 @@ from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass, asdict, field
 from copy import deepcopy
 
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout,
-                             QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea, QSpinBox)
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout, QTableWidget,
+                             QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea, QSpinBox,
+                             QHeaderView, QTableWidgetItem, QInputDialog, QListWidget)
 from PyQt6.QtGui import QColor, QIcon
-from PyQt6.QtCore import QSize, pyqtSignal
+from PyQt6.QtCore import QSize, pyqtSignal, Qt
 
-VERSION = '1.10 (2026.09)'
+VERSION = '1.11 (2026.09)'
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
 WINNINGS_FILE = os.path.join(DATA_DIR, "win_sets.json")
+
 CARD1_SIZE = 35
 CARD2_SIZE = 54
+WINNING_VARIANTS = [
+    (2, 0), (3, 0), (4, 0), (1, 1), (0, 1), (2, 1), (3, 1),
+    (5, 0), (4, 1), (6, 0), (5, 1), (6, 1), (7, 0), (7, 1)
+]
 
 COLORS = [
     QColor("#9ac87d"),  # 1 — светло-зелёный
@@ -58,7 +63,7 @@ def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def load_all_data() -> Dict[str, 'TicketSets']:
+def load_all_tickets() -> Dict[str, 'TicketSets']:
     ensure_data_dir()
     if not os.path.exists(DATA_FILE):
         return {}
@@ -70,7 +75,7 @@ def load_all_data() -> Dict[str, 'TicketSets']:
         return {}
 
 
-def save_all_data(data: Dict[str, 'TicketSets']):
+def save_all_tickets(data: Dict[str, 'TicketSets']):
     ensure_data_dir()
     serialized = [d.to_dict() for d in data.values()]
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -108,9 +113,9 @@ def load_all_winnings() -> Dict[str, 'Winning']:
         return {}
 
 
-def save_all_winnings(winnings: List["Winning"]):
+def save_all_winnings(data: Dict[str, "Winning"]):
     ensure_data_dir()
-    serialized = [w.to_dict() for w in winnings]
+    serialized = [w.to_dict() for w in data.values()]
     with open(WINNINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(serialized, f, ensure_ascii=False, indent=2)
 
@@ -338,7 +343,7 @@ class Window(QWidget):
 
 class WelcomeWindow(Window):
     def __init__(self):
-        super().__init__('Carrots', height=220)
+        super().__init__('Carrots', height=270)
         self._init_ui()
 
     def _init_ui(self):
@@ -346,22 +351,30 @@ class WelcomeWindow(Window):
         button_input.clicked.connect(self.open_input_data_window)
         button_results = Button('Результаты', fixed_height=50)
         button_results.clicked.connect(self.open_results_window)
+        button_winning = Button('Схемы призов', fixed_height=50)
+        button_winning.clicked.connect(self.open_winning_window)
         button_about = Button('О программе', fixed_height=50)
         button_about.clicked.connect(self.on_click_about)
 
         main_v_layout = QVBoxLayout()
         main_v_layout.addWidget(button_input)
         main_v_layout.addWidget(button_results)
+        main_v_layout.addWidget(button_winning)
         main_v_layout.addWidget(button_about)
         self.setLayout(main_v_layout)
 
     def open_input_data_window(self):
-        self.window = InputWindow()
+        self.window = TicketWindow()
         self.window.show()
         self.close()
 
     def open_results_window(self):
         self.window = ResultWindow('')
+        self.window.show()
+        self.close()
+
+    def open_winning_window(self):
+        self.window = WinningWindow()
         self.window.show()
         self.close()
 
@@ -432,10 +445,10 @@ class CardWidget(QFrame):
             self.buttons[i].setStyleSheet(self._build_style(i))
 
 
-class InputWindow(Window):
+class TicketWindow(Window):
     def __init__(self):
         super().__init__('Билеты', width=800, height=600)
-        self.all_data: Dict[str, TicketSets] = load_all_data()
+        self.tickets_data: Dict[str, TicketSets] = load_all_tickets()
         self.winning_data: Dict[str, Winning] = load_all_winnings()
         self.current_date: Optional[str] = None
         self.selected_ticket_index = 0
@@ -443,7 +456,7 @@ class InputWindow(Window):
         self.first_time = True
         self.original_data = None
 
-        self.all_results: Dict[str, Result] = load_all_results()
+        self.results_data: Dict[str, Result] = load_all_results()
         self.excluded_nums = self.calc_top_nums()
 
         # Рабочее состояние: 0 = пусто, 1..5 = цвет (номер билета)
@@ -576,7 +589,7 @@ class InputWindow(Window):
     # ── Логика переключения даты и набора ──
 
     def _refresh_dates(self):
-        dates = sorted(self.all_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.tickets_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(dates)
@@ -599,20 +612,20 @@ class InputWindow(Window):
         self._load_current_context()
 
     def on_remove_date(self):
-        if not self.current_date or self.current_date not in self.all_data:
+        if not self.current_date or self.current_date not in self.tickets_data:
             return
         reply = QMessageBox.question(self, 'Удаление билетов',
                                      f'Вы действительно хотите удалить все билеты\nза {self.current_date}?',
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
             return
-        del self.all_data[self.current_date]
-        save_all_data(self.all_data)
+        del self.tickets_data[self.current_date]
+        save_all_tickets(self.tickets_data)
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.all_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
+            sorted(self.tickets_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
@@ -626,7 +639,7 @@ class InputWindow(Window):
         if self.combo_set.count() == 0:
             self.combo_set.addItem(f"Набор 1")
 
-        if not self.current_date or self.current_date not in self.all_data:
+        if not self.current_date or self.current_date not in self.tickets_data:
             # Пустая дата
             self._clear_cards()
             self._update_radio_buttons()
@@ -635,7 +648,7 @@ class InputWindow(Window):
             self.cost_spin.blockSignals(False)
             return
 
-        data = self.all_data[self.current_date]
+        data = self.tickets_data[self.current_date]
 
         # Устанавливаем схему выигрыша
         win_set_name = data.win_set
@@ -661,28 +674,28 @@ class InputWindow(Window):
         self._update_cost()
 
         # Делаем снапшот
-        if self.current_date and self.current_date in self.all_data:
-            self.original_data = deepcopy(self.all_data[self.current_date])
+        if self.current_date and self.current_date in self.tickets_data:
+            self.original_data = deepcopy(self.tickets_data[self.current_date])
         else:
             self.original_data = None
 
     def _on_set_changed(self, index: int):
-        if self.current_date and self.current_date in self.all_data:
+        if self.current_date and self.current_date in self.tickets_data:
             self.current_set_index = index
             self._apply_set_data(index)
             self._update_radio_buttons()
 
     def _on_win_set_changed(self):
-        if self.current_date and self.current_date in self.all_data:
-            self.all_data[self.current_date].win_set = self.win_combo.currentText()
+        if self.current_date and self.current_date in self.tickets_data:
+            self.tickets_data[self.current_date].win_set = self.win_combo.currentText()
 
     def _on_cost_changed(self):
-        if self.current_date and self.current_date in self.all_data:
-            self.all_data[self.current_date].cost = self.cost_spin.value()
+        if self.current_date and self.current_date in self.tickets_data:
+            self.tickets_data[self.current_date].cost = self.cost_spin.value()
         self._update_total_cost_text()
 
     def _apply_set_data(self, set_idx: int):
-        data = self.all_data[self.current_date]
+        data = self.tickets_data[self.current_date]
         tickets = data.get_current_tickets(set_idx)
 
         # Очищаем локальные массивы
@@ -706,14 +719,14 @@ class InputWindow(Window):
             QMessageBox.warning(self, "Ошибка", "Сначала выберите или введите дату!")
             return
 
-        if self.current_date not in self.all_data:
-            self.all_data[self.current_date] = TicketSets(date=self.current_date,
+        if self.current_date not in self.tickets_data:
+            self.tickets_data[self.current_date] = TicketSets(date=self.current_date,
                                                           win_set=self.win_combo.currentText(),
                                                           cost=0)
 
         # Проверка, что последний набор полностью заполнен
-        data = self.all_data[self.current_date].sets[-1]
-        sets = len(self.all_data[self.current_date].sets)
+        data = self.tickets_data[self.current_date].sets[-1]
+        sets = len(self.tickets_data[self.current_date].sets)
         tickets = sum([1 for t in data if t.is_valid()])
         if tickets < 5:
             tickets = choose_plural(tickets, ('билет', 'билета', 'билетов'))
@@ -722,20 +735,20 @@ class InputWindow(Window):
                                 f"\nСейчас в наборе {sets} полностью заполнено всего {tickets}.")
             return
 
-        self.all_data[self.current_date].add_empty_set()
+        self.tickets_data[self.current_date].add_empty_set()
 
         # Перезагружаем контекст, чтобы обновить комбо и выбрать новый набор
         self._load_current_context()
-        last_idx = len(self.all_data[self.current_date].sets) - 1
+        last_idx = len(self.tickets_data[self.current_date].sets) - 1
         self.combo_set.setCurrentIndex(last_idx)
         self.current_set_index = last_idx
         self._update_total_cost_text()
 
     def on_remove_set(self):
-        if not self.current_date or self.current_date not in self.all_data:
+        if not self.current_date or self.current_date not in self.tickets_data:
             return
 
-        data = self.all_data[self.current_date]
+        data = self.tickets_data[self.current_date]
         count = len(data.sets)
 
         if count == 0:
@@ -765,13 +778,13 @@ class InputWindow(Window):
     # ── Вспомогательные методы UI ──
 
     def calc_top_nums(self) -> Optional[List[List[int]]]:
-        if len(self.all_results) == 0:
+        if len(self.results_data) == 0:
             return None
-        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
         cur_date = self.current_date if is_valid_date(self.current_date) else dt.now().strftime('%d.%m.%y')
         dates = list(filter(lambda d: dt.strptime(d, '%d.%m.%y') < dt.strptime(cur_date, '%d.%m.%y'), dates))
-        nums = [self.all_results[d].second_card_selected for d in dates
-                if self.all_results[d].second_card_selected is not None][:30]
+        nums = [self.results_data[d].second_card_selected for d in dates
+                if self.results_data[d].second_card_selected is not None][:30]
         if not nums:
             return None
         unic_nums = list({n: None for n in nums})
@@ -796,12 +809,12 @@ class InputWindow(Window):
     def _highlight_already_selected_nums(self):
         """Подсвечивает числа второй карточки зеленым, если число уже выбрано в другом наборе"""
         if (not self.current_date or
-                self.current_date not in self.all_data or
-                len(self.all_data[self.current_date].sets) < 2):
+                self.current_date not in self.tickets_data or
+                len(self.tickets_data[self.current_date].sets) < 2):
             return
-        for idx in range(len(self.all_data[self.current_date].sets)):
+        for idx in range(len(self.tickets_data[self.current_date].sets)):
             if idx != self.current_set_index:
-                for num in [t.second_card_selected for t in self.all_data[self.current_date].sets[idx]]:
+                for num in [t.second_card_selected for t in self.tickets_data[self.current_date].sets[idx]]:
                     if 0 <= num < CARD2_SIZE:
                         change_style(self.card2.buttons[num], 'color', 'green')
 
@@ -837,22 +850,22 @@ class InputWindow(Window):
 
     def _update_cost(self):
         """Обновляет данные по стоимости"""
-        if self.current_date and self.current_date in self.all_data:
-            self.cost_spin.setValue(self.all_data[self.current_date].cost)
+        if self.current_date and self.current_date in self.tickets_data:
+            self.cost_spin.setValue(self.tickets_data[self.current_date].cost)
         else:
             self.cost_spin.setValue(0)
         self._update_total_cost_text()
 
     def _update_total_cost_text(self):
         cost = self.calculate_total_cost()
-        self.total_cost_label.setText(f'Общая стоимость = {cost}')
+        self.total_cost_label.setText(f'Общая стоимость = {cost}🥕')
 
     def calculate_total_cost(self) -> int:
-        if not self.current_date or self.current_date not in self.all_data:
+        if not self.current_date or self.current_date not in self.tickets_data:
             return 0
         cost = self.cost_spin.value()
         tickets = 0
-        for s in self.all_data[self.current_date].sets:
+        for s in self.tickets_data[self.current_date].sets:
             tickets += sum([1 for t in s if t.is_valid()])
         return cost * tickets
 
@@ -932,9 +945,9 @@ class InputWindow(Window):
 
         # --- Отбор свободных ячеек для второй карточки ---
         # Убираем числа, выбранные в других наборах
-        for idx in range(len(self.all_data[self.current_date].sets)):
+        for idx in range(len(self.tickets_data[self.current_date].sets)):
             if idx != self.current_set_index:
-                second_card_selected = [t.second_card_selected for t in self.all_data[self.current_date].sets[idx]]
+                second_card_selected = [t.second_card_selected for t in self.tickets_data[self.current_date].sets[idx]]
                 if len(free2) > len(second_card_selected):
                     free2 = [f for f in free2 if f not in second_card_selected]
 
@@ -967,16 +980,16 @@ class InputWindow(Window):
         self._update_total_cost_text()
 
     def _sync_to_data(self):
-        """Записывает текущее состояние карточек в self.all_data"""
+        """Записывает текущее состояние карточек в self.tickets_data"""
         if not self.current_date:
             return
 
-        if self.current_date not in self.all_data:
-            self.all_data[self.current_date] = TicketSets(date=self.current_date,
+        if self.current_date not in self.tickets_data:
+            self.tickets_data[self.current_date] = TicketSets(date=self.current_date,
                                                           win_set=self.win_combo.currentText(),
                                                           cost=0)
 
-        data = self.all_data[self.current_date]
+        data = self.tickets_data[self.current_date]
 
         if not data.sets:
             data.add_empty_set()
@@ -1000,7 +1013,7 @@ class InputWindow(Window):
             return
 
         save_date = date or self.current_date
-        data = self.all_data[save_date]
+        data = self.tickets_data[save_date]
 
         if not data.is_valid():
             errors = []
@@ -1016,11 +1029,11 @@ class InputWindow(Window):
             QMessageBox.warning(self, "Ошибка валидации", '\n'.join(errors))
             return
 
-        save_all_data(self.all_data)
+        save_all_tickets(self.tickets_data)
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
-        self.date_combo.addItems(sorted(self.all_data.keys(), reverse=True,
+        self.date_combo.addItems(sorted(self.tickets_data.keys(), reverse=True,
                                         key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
@@ -1028,17 +1041,17 @@ class InputWindow(Window):
         self.combo_set.setCurrentIndex(self.current_set_index)
 
         # Обновляем снапшот только если сохранили именно текущую дату
-        if save_date == self.current_date and self.current_date in self.all_data:
-            self.original_data = deepcopy(self.all_data[self.current_date])
+        if save_date == self.current_date and self.current_date in self.tickets_data:
+            self.original_data = deepcopy(self.tickets_data[self.current_date])
 
         QMessageBox.information(self, 'Успешно', f'Данные сохранены в {DATA_FILE}')
 
     def check_changes(self, old_date: str):
         """Проверка на несохраненные изменения"""
-        if not old_date or old_date not in self.all_data:
+        if not old_date or old_date not in self.tickets_data:
             return
 
-        if self.all_data[old_date] != self.original_data:
+        if self.tickets_data[old_date] != self.original_data:
             reply = QMessageBox.question(self, 'Данные изменены',
                                          f'Есть изменения в данных!\nСохранить изменения перед продолжением?',
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -1055,8 +1068,8 @@ class InputWindow(Window):
 class ResultWindow(Window):
     def __init__(self, date: str = ''):
         super().__init__('Результаты', width=800, height=600)
-        self.all_results: Dict[str, Result] = load_all_results()
-        self.ticket_data: Dict[str, TicketSets] = load_all_data()
+        self.results_data: Dict[str, Result] = load_all_results()
+        self.ticket_data: Dict[str, TicketSets] = load_all_tickets()
         self.winning_data: Dict[str, Winning] = load_all_winnings()
         self.current_date: Optional[str] = None
 
@@ -1079,7 +1092,7 @@ class ResultWindow(Window):
         # Дата
         date_row = QHBoxLayout()
         self.date_combo = ComboList(fixed_width=105, editable=True, date_mask=True)
-        dates = sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
         self.date_combo.addItems(dates)
         self.date_combo.setCurrentText('')
         self.date_combo.currentTextChanged.connect(self._on_date_changed)
@@ -1158,8 +1171,8 @@ class ResultWindow(Window):
         self.current_date = new_date
         self.check_changes(old_date)
         self._load_result()
-        if new_date and new_date in self.all_results:
-            self.win_combo.setCurrentText(self.all_results[new_date].win_set)
+        if new_date and new_date in self.results_data:
+            self.win_combo.setCurrentText(self.results_data[new_date].win_set)
         if new_date and new_date in self.ticket_data:
             self.win_combo.setCurrentText(self.ticket_data[new_date].win_set)
             self.win_combo.setEnabled(False)
@@ -1168,20 +1181,20 @@ class ResultWindow(Window):
         self._update_labels()
 
     def on_remove_date(self):
-        if not self.current_date or self.current_date not in self.all_results:
+        if not self.current_date or self.current_date not in self.results_data:
             return
         reply = QMessageBox.question(self, 'Удаление результата',
                                      f'Вы действительно хотите удалить результат\nза {self.current_date}?',
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
             return
-        del self.all_results[self.current_date]
-        save_all_results(self.all_results)
+        del self.results_data[self.current_date]
+        save_all_results(self.results_data)
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
+            sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
@@ -1196,10 +1209,10 @@ class ResultWindow(Window):
         self._clear_outlines()
         self._clear_buttons()
 
-        if not self.current_date or self.current_date not in self.all_results:
+        if not self.current_date or self.current_date not in self.results_data:
             return
 
-        result = self.all_results[self.current_date]
+        result = self.results_data[self.current_date]
         self.result_first = set(result.first_card_selected)
         self.result_second = result.second_card_selected
         self._render_cards()
@@ -1374,12 +1387,12 @@ class ResultWindow(Window):
                         won_b += amount
 
         spent = valid_count * ts.cost
-        won_text = f'{won_m:,d} м., ' if won_m else ''
-        won_text += f'{won_b:,d} б.' if won_b else ''
+        won_text = f'{won_m:,d}🥕, ' if won_m else ''
+        won_text += f'{won_b:,d}💵' if won_b else ''
         if won_m or won_b:
-            self.result_label.setText(f'Потрачено: {spent:,d} м., выиграно {won_text.strip(", ")}')
+            self.result_label.setText(f'Потрачено: {spent:,d}🥕, выиграно {won_text.strip(", ")}')
         else:
-            self.result_label.setText(f'Потрачено: {spent:,d} м.')
+            self.result_label.setText(f'Потрачено: {spent:,d}🥕')
 
     # ── Сохранение ──
 
@@ -1404,13 +1417,13 @@ class ResultWindow(Window):
             first_card_selected=sorted(self.result_first),
             second_card_selected=self.result_second
         )
-        self.all_results[save_date] = result
-        save_all_results(self.all_results)
+        self.results_data[save_date] = result
+        save_all_results(self.results_data)
 
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.all_results.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
+            sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
@@ -1424,8 +1437,8 @@ class ResultWindow(Window):
         first_result = sorted(list(self.result_first))
         second_result = self.result_second
         result = Result(date, win_set, first_result, second_result)
-        if old_date and old_date in self.all_results:
-            if self.all_results[old_date] != result:
+        if old_date and old_date in self.results_data:
+            if self.results_data[old_date] != result:
                 reply = QMessageBox.question(self, 'Данные изменены',
                                              f'Есть изменения в данных!\nСохранить изменения перед продолжением?',
                                              QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -1441,6 +1454,400 @@ class ResultWindow(Window):
         self.window = WelcomeWindow()
         self.window.show()
         self.close()
+
+
+class WinningWindow(Window):
+    def __init__(self):
+        super().__init__('Схемы призов', width=700, height=600)
+        self.winning_data: Dict[str, Winning] = load_all_winnings()
+        self.tickets_data: Dict[str, TicketSets] = load_all_tickets()
+        self.results_data: Dict[str, Result] = load_all_results()
+        self.original_data = None
+        self.trigger_to_save = False  # при любом изменении становится True
+
+        self._init_ui()
+
+    def _init_ui(self):
+        main_layout = QVBoxLayout()
+
+        # === Верхняя часть: две панели рядом ===
+        panels_layout = QHBoxLayout()
+
+        # --- Левая панель: список схем ---
+        left_panel = QWidget()
+        left_layout = QVBoxLayout()
+        left_panel.setLayout(left_layout)
+
+        # --- Схема призов - кнопки ---
+        left_btn_layout = QHBoxLayout()
+        left_btn_layout.addWidget(Label("Схемы призов"))
+
+        btn_add_winning = Button('', fixed_width=30, fixed_height=30)
+        btn_add_winning.setIcon(QIcon('images/add.png'))
+        btn_add_winning.clicked.connect(self.on_add_winning)
+
+        btn_copy_winning = Button('', fixed_width=30, fixed_height=30)
+        btn_copy_winning.setIcon(QIcon('images/copy.png'))
+        btn_copy_winning.clicked.connect(self.on_copy_winning)
+
+        btn_rename_winning = Button('', fixed_width=30, fixed_height=30)
+        btn_rename_winning.setIcon(QIcon('images/rename.png'))
+        btn_rename_winning.clicked.connect(self.on_rename_winning)
+
+        btn_del_winning = Button('', fixed_width=30, fixed_height=30)
+        btn_del_winning.setIcon(QIcon('images/delete.png'))
+        btn_del_winning.clicked.connect(self.on_remove_winning)
+
+        left_btn_layout.addWidget(btn_add_winning)
+        left_btn_layout.addWidget(btn_copy_winning)
+        left_btn_layout.addWidget(btn_rename_winning)
+        left_btn_layout.addWidget(btn_del_winning)
+        left_layout.addLayout(left_btn_layout)
+
+        self.list_winnings = QListWidget()
+        self.list_winnings.setStyleSheet('color: #203764; font-size: 16px')
+        self.list_winnings.currentRowChanged.connect(self._on_selection_changed)
+        left_layout.addWidget(self.list_winnings)
+
+        panels_layout.addWidget(left_panel, stretch=1)
+
+        # --- Правая панель: редактирование ---
+        right_panel = QWidget()
+        right_layout = QVBoxLayout()
+        right_panel.setLayout(right_layout)
+
+        # Кнопки сверху
+        btn_row = QHBoxLayout()
+
+        self.btn_save_set = Button("Сохранить", fixed_width=180)
+        self.btn_save_set.clicked.connect(self.on_save_winning)
+        btn_row.addWidget(self.btn_save_set)
+
+        btn_back = Button("Назад", fixed_width=180)
+        btn_back.clicked.connect(self.open_main_window)
+        btn_row.addWidget(btn_back)
+
+        right_layout.addLayout(btn_row)
+
+        # Таблица вариантов
+        self.table_sets = QTableWidget()
+        self.table_sets.setStyleSheet('color: #203764; font-size: 16px')
+        self.table_sets.setColumnCount(3)
+        self.table_sets.setHorizontalHeaderLabels(["Вариант", "Номинал", "Тип"])
+        self.table_sets.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table_sets.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table_sets.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table_sets.setColumnWidth(0, 200)
+        self.table_sets.setColumnWidth(2, 80)
+        self.table_sets.itemChanged.connect(self._on_nominal_changed)
+        self.table_sets.itemClicked.connect(self._on_type_cell_clicked)
+        right_layout.addWidget(self.table_sets)
+
+        panels_layout.addWidget(right_panel, stretch=2)
+        main_layout.addLayout(panels_layout, stretch=1)
+
+        self.setLayout(main_layout)
+        self._refresh_list()
+
+    # --- Логика ---
+
+    @staticmethod
+    def _generate_variant_text(x: int, y: int) -> str:
+        return '🟡' * x + '🟣' * y
+
+    def _refresh_list(self):
+        self.list_winnings.blockSignals(True)
+        self.list_winnings.clear()
+        self.list_winnings.addItems(self.winning_data.keys())
+        self.list_winnings.blockSignals(False)
+
+    def _on_selection_changed(self, row: int):
+        if row < 0 or row >= len(self.winning_data):
+            self._clear_edit_form()
+            return
+        name = self.list_winnings.item(row).text()
+        obj = self.winning_data[name]
+        self._populate_sets_table(obj)
+
+    def _clear_edit_form(self):
+        self.table_sets.setRowCount(0)
+
+    def _populate_sets_table(self, obj: 'Winning'):
+        self.table_sets.blockSignals(True)
+        self.table_sets.setRowCount(0)
+
+        for (x, y), value in obj.sets.items():
+            row = self.table_sets.rowCount()
+            self.table_sets.insertRow(row)
+
+            # Колонка 0: Вариант (нередактируемый)
+            variant_text = self._generate_variant_text(x, y)
+            variant_item = QTableWidgetItem(variant_text)
+            variant_item.setFlags(variant_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            variant_item.setData(Qt.ItemDataRole.UserRole, (x, y))
+            self.table_sets.setItem(row, 0, variant_item)
+
+            # Колонка 1: Номинал — value[0] (число), 0 = пусто
+            nominal = value[0] if isinstance(value, list) and len(value) >= 1 else 0
+            nominal_str = str(nominal) if nominal else ""
+            self.table_sets.setItem(row, 1, QTableWidgetItem(nominal_str))
+
+            # Колонка 2: Тип — value[1] ('м.' / 'б.')
+            prize_type = value[1] if isinstance(value, list) and len(value) >= 2 else 'м.'
+            type_item = QTableWidgetItem()
+            type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if prize_type == 'б.':
+                type_item.setText('💵')
+                type_item.setData(Qt.ItemDataRole.UserRole, 'б.')
+            else:
+                type_item.setText('🥕')
+                type_item.setData(Qt.ItemDataRole.UserRole, 'м.')
+            self.table_sets.setItem(row, 2, type_item)
+
+        self.table_sets.blockSignals(False)
+
+    def _on_nominal_changed(self, item: QTableWidgetItem):
+        if item.column() != 1:
+            return
+
+        row = self.list_winnings.currentRow()
+        if row < 0:
+            return
+        scheme_name = self.list_winnings.item(row).text()
+
+        row_idx = item.row()
+        variant_item = self.table_sets.item(row_idx, 0)
+        if not variant_item:
+            return
+        coords = variant_item.data(Qt.ItemDataRole.UserRole)
+        if not coords:
+            return
+        x, y = coords
+
+        text = item.text().strip()
+        scheme = self.winning_data.get(scheme_name)
+        try:
+            nominal = int(text) if text else 0
+        except ValueError:
+            # Восстанавливаем прежнее значение, если ввели не число
+            if scheme and (x, y) in scheme.sets:
+                old_val = scheme.sets[(x, y)][0]
+                self.table_sets.blockSignals(True)
+                item.setText(str(old_val) if old_val else "")
+                self.table_sets.blockSignals(False)
+            return
+
+        if scheme and (x, y) in scheme.sets:
+            scheme.sets[(x, y)][0] = nominal
+        self.trigger_to_save = True
+
+    def _on_type_cell_clicked(self, item: QTableWidgetItem):
+        if item.column() != 2:
+            return
+
+        row = self.list_winnings.currentRow()
+        if row < 0:
+            return
+        scheme_name = self.list_winnings.item(row).text()
+
+        row_idx = item.row()
+        variant_item = self.table_sets.item(row_idx, 0)
+        if not variant_item:
+            return
+        coords = variant_item.data(Qt.ItemDataRole.UserRole)
+        if not coords:
+            return
+        x, y = coords
+
+        current = item.data(Qt.ItemDataRole.UserRole)
+        if current == 'м.':
+            new_type = 'б.'
+            item.setText('💵')
+        else:
+            new_type = 'м.'
+            item.setText('🥕')
+        item.setData(Qt.ItemDataRole.UserRole, new_type)
+
+        # Сохраняем напрямую в winning_data
+        scheme = self.winning_data.get(scheme_name)
+        if scheme and (x, y) in scheme.sets:
+            scheme.sets[(x, y)][1] = new_type
+        self.trigger_to_save = True
+
+    def on_add_winning(self):
+        base_name = dt.now().strftime('%d-%m-%y')
+        name = base_name
+        i = 2
+        while name in self.winning_data:
+            name = f"{base_name}_{i:02d}"
+            i += 1
+        name, ok = QInputDialog.getText(self, "Новая схема", "Введите название схемы:", text=name)
+        name = name.strip()
+        if not ok or not name:
+            return
+        if name in self.winning_data:
+            QMessageBox.warning(self, "Ошибка", "Схема с таким именем уже существует.")
+            return
+        # Создаём схему с 14 готовыми вариантами: номинал пустой, тип — б.
+        sets = {key: [0, 'б.'] for key in WINNING_VARIANTS}
+        self.winning_data[name] = Winning(name=name, sets=sets)
+        self._refresh_list()
+        row = list(self.winning_data.keys()).index(name)
+        self.list_winnings.setCurrentRow(row)
+        self.trigger_to_save = True
+
+    def on_copy_winning(self):
+        row = self.list_winnings.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "Копирование", "Сначала выберите схему для копирования.")
+            return
+        original_name = self.list_winnings.item(row).text()
+        base_name = original_name
+        # Подбираем уникальное имя: "Схема 40-2_copy", "Схема 40-2_copy2", ...
+        copy_name = f"{base_name}_(01)"
+        i = 2
+        while copy_name in self.winning_data:
+            copy_name = f"{base_name}_({i:02d})"
+            i += 1
+
+        name, ok = QInputDialog.getText(self, "Копирование схемы", "Введите название новой схемы:", text=copy_name)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if name in self.winning_data:
+            QMessageBox.warning(self, "Ошибка", "Схема с таким именем уже существует.")
+            return
+
+        # Глубокая копия данных
+        original = self.winning_data[original_name]
+        copied_sets = {k: list(v) for k, v in original.sets.items()}
+        self.winning_data[name] = Winning(name=name, sets=copied_sets)
+        self._refresh_list()
+        new_row = list(self.winning_data.keys()).index(name)
+        self.list_winnings.setCurrentRow(new_row)
+        self.trigger_to_save = True
+
+    def on_rename_winning(self):
+        row = self.list_winnings.currentRow()
+        if row < 0:
+            return
+        name = self.list_winnings.item(row).text()
+
+        # Проверка наличия схемы в результатах
+        if any(map(lambda date: self.results_data[date].win_set == name, self.results_data)):
+            reply = QMessageBox.question(self, "Наличие схемы в результатах",
+                                         f"Вы действительно хотите переименовать схему «{name}»?\n"
+                                         "Данная схема есть в результатах!",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        new_name, ok = QInputDialog.getText(self, "Переименование схемы",
+                                            "Введите название для переименования:",
+                                            text=name)
+        new_name = new_name.strip()
+        if not ok or not new_name:
+            return
+        if new_name in self.winning_data:
+            QMessageBox.warning(self, "Ошибка", "Схема с таким именем уже существует.")
+            return
+
+        # Переименование схем в билетах
+        for ticket in self.tickets_data:
+            if self.tickets_data[ticket].win_set == name:
+                self.tickets_data[ticket].win_set = new_name
+        save_all_tickets(self.tickets_data)
+
+        # Переименование схем в результатах
+        for result in self.results_data:
+            if self.results_data[result].win_set == name:
+                self.results_data[result].win_set = new_name
+        save_all_results(self.results_data)
+
+        original = self.winning_data[name]
+        copied_sets = {k: list(v) for k, v in original.sets.items()}
+        self.winning_data[new_name] = Winning(name=new_name, sets=copied_sets)
+        del self.winning_data[name]
+        self._refresh_list()
+        new_row = list(self.winning_data.keys()).index(new_name)
+        self.list_winnings.setCurrentRow(new_row)
+
+        self.trigger_to_save = True
+
+    def on_remove_winning(self):
+        row = self.list_winnings.currentRow()
+        if row < 0:
+            return
+        name = self.list_winnings.item(row).text()
+
+        # Проверка наличия схемы в результатах
+        if any(map(lambda date: self.results_data[date].win_set == name, self.results_data)):
+            QMessageBox.warning(self, "Невозможно удалить", "Сначала нужно удалить данные в результатах!")
+            return
+
+        # Проверка наличия схемы в билетах
+        if any(map(lambda date: self.tickets_data[date].win_set == name, self.tickets_data)):
+            QMessageBox.warning(self, "Невозможно удалить", "Сначала нужно удалить данные в билетах!")
+            return
+
+        reply = QMessageBox.question(self, "Удаление схемы",
+                                    f"Вы действительно хотите удалить схему «{name}»?",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        del self.winning_data[name]
+        self._refresh_list()
+        self._clear_edit_form()
+        self.trigger_to_save = True
+
+    def on_save_winning(self):
+        # Проверка незаполненных номиналов
+        for scheme in self.winning_data:
+            if any(map(lambda s: s[0] == 0, self.winning_data[scheme].sets.values())):
+                QMessageBox.warning(self, "Незаполненные данные",
+                                    f"В схеме {scheme} есть варианты с нулевым номиналом!\n"
+                                    "Все данные должны быть заполнены!")
+                return
+
+        save_all_winnings(self.winning_data)
+        QMessageBox.information(self, "Успех", f"Результат сохранён в {WINNINGS_FILE}")
+        self.trigger_to_save = False
+
+    def closeEvent(self, event):
+        if not getattr(self, 'trigger_to_save', True):
+            event.accept()
+            return
+        reply = QMessageBox.question(self, 'Данные изменены',
+                                     f'Есть изменения в данных!\nСохранить изменения перед выходом?',
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.on_save_winning()
+            event.accept()
+        elif reply == QMessageBox.StandardButton.No:
+            self.trigger_to_save = True
+            event.accept()
+        else:
+            event.ignore()
+
+    def open_main_window(self):
+        if self.trigger_to_save:
+            reply = QMessageBox.question(self, 'Данные изменены',
+                                         f'Есть изменения в данных!\nСохранить изменения перед выходом?',
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                self.on_save_winning()
+
+        self.window = WelcomeWindow()
+        self.window.show()
+        self.close()
+
+    # @staticmethod
+    # def open_editor(parent, all_winnings: Dict[str, 'Winning']) -> Optional[Dict[str, 'Winning']]:
+    #     """Статический метод для удобного вызова из другого окна"""
+    #     dialog = WinningEditorWindow(all_winnings)
+    #     if dialog.exec() == QDialog.DialogCode.Accepted:
+    #         return dialog.all_winnings
+    #     return None
 
 
 def change_style(widget, parameter: str, value: str):
