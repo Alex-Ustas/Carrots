@@ -1,5 +1,5 @@
 # TODO:
-#   - TicketWindow: при сохранении дата и набор не должны сбрасываться
+#   - Добавить статистику
 
 import sys, json, random, os, re
 from datetime import datetime as dt
@@ -15,7 +15,7 @@ from PyQt6.QtCore import QSize, pyqtSignal, Qt
 
 VERSION = '1.11 (2026.09)'
 DATA_DIR = "data"
-DATA_FILE = os.path.join(DATA_DIR, "tickets.json")
+TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
 WINNINGS_FILE = os.path.join(DATA_DIR, "win_sets.json")
 
@@ -65,10 +65,10 @@ def ensure_data_dir():
 
 def load_all_tickets() -> Dict[str, 'TicketSets']:
     ensure_data_dir()
-    if not os.path.exists(DATA_FILE):
+    if not os.path.exists(TICKETS_FILE):
         return {}
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
+        with open(TICKETS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return {d["date"]: TicketSets.from_dict(d) for d in data}
     except Exception:
@@ -78,7 +78,7 @@ def load_all_tickets() -> Dict[str, 'TicketSets']:
 def save_all_tickets(data: Dict[str, 'TicketSets']):
     ensure_data_dir()
     serialized = [d.to_dict() for d in data.values()]
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+    with open(TICKETS_FILE, "w", encoding="utf-8") as f:
         json.dump(serialized, f, ensure_ascii=False, indent=2)
 
 
@@ -411,7 +411,7 @@ class CardWidget(QFrame):
         self.buttons: List[CardButton] = []
         for i in range(self.total):
             btn = CardButton(str(i + 1))
-            btn.clicked.connect(lambda _, idx=i: self.cell_clicked.emit(idx))
+            btn.clicked.connect(lambda _, idx=i: self.cell_clicked.emit(idx))  # type: ignore
             self.buttons.append(btn)
             r, c = divmod(i, cols)
             layout.addWidget(btn, r, c)
@@ -526,7 +526,7 @@ class TicketWindow(Window):
                 f'background-color: {color.name()}; padding: 6px; '
                 f'color: #203764; border: 1px solid #888; font-size: 16px; font-weight: bold; '
             )
-            rb.clicked.connect(lambda _, idx=i: self._set_color(idx))
+            rb.clicked.connect(lambda _, idx=i: self._set_color(idx))  # type: ignore
             self.color_buttons.append(rb)
             left_layout.addWidget(rb)
         self.color_buttons[0].setChecked(True)
@@ -558,7 +558,7 @@ class TicketWindow(Window):
 
         # Карточка 1
         self.card1 = CardWidget(rows=4, cols=9, active=CARD1_SIZE)
-        self.card1.cell_clicked.connect(self.on_card1_click)
+        self.card1.cell_clicked.connect(self.on_card1_click)  # type: ignore
         right_layout.addWidget(self.card1)
 
         right_layout.addStretch()
@@ -579,7 +579,7 @@ class TicketWindow(Window):
 
         # Карточка 2
         self.card2 = CardWidget(rows=6, cols=9, active=CARD2_SIZE)
-        self.card2.cell_clicked.connect(self.on_card2_click)
+        self.card2.cell_clicked.connect(self.on_card2_click)  # type: ignore
         right_layout.addWidget(self.card2)
 
         main_layout.addWidget(left, stretch=1)
@@ -721,8 +721,8 @@ class TicketWindow(Window):
 
         if self.current_date not in self.tickets_data:
             self.tickets_data[self.current_date] = TicketSets(date=self.current_date,
-                                                          win_set=self.win_combo.currentText(),
-                                                          cost=0)
+                                                              win_set=self.win_combo.currentText(),
+                                                              cost=self.cost_spin.value())
 
         # Проверка, что последний набор полностью заполнен
         data = self.tickets_data[self.current_date].sets[-1]
@@ -986,8 +986,8 @@ class TicketWindow(Window):
 
         if self.current_date not in self.tickets_data:
             self.tickets_data[self.current_date] = TicketSets(date=self.current_date,
-                                                          win_set=self.win_combo.currentText(),
-                                                          cost=0)
+                                                              win_set=self.win_combo.currentText(),
+                                                              cost=self.cost_spin.value())
 
         data = self.tickets_data[self.current_date]
 
@@ -1044,7 +1044,7 @@ class TicketWindow(Window):
         if save_date == self.current_date and self.current_date in self.tickets_data:
             self.original_data = deepcopy(self.tickets_data[self.current_date])
 
-        QMessageBox.information(self, 'Успешно', f'Данные сохранены в {DATA_FILE}')
+        QMessageBox.information(self, 'Успешно', f'Данные сохранены в {TICKETS_FILE}')
 
     def check_changes(self, old_date: str):
         """Проверка на несохраненные изменения"""
@@ -1057,6 +1057,10 @@ class TicketWindow(Window):
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
                 self.on_save(old_date)
+
+    def closeEvent(self, event):
+        self.check_changes(self.current_date)
+        event.accept()
 
     def open_main_window(self):
         self.check_changes(self.current_date)
@@ -1142,7 +1146,7 @@ class ResultWindow(Window):
         right.setLayout(right_layout)
 
         self.card1 = CardWidget(rows=4, cols=9, active=CARD1_SIZE)
-        self.card1.cell_clicked.connect(self.on_card1_click)
+        self.card1.cell_clicked.connect(self.on_card1_click)  # type: ignore
         right_layout.addWidget(self.card1)
 
         right_layout.addStretch()
@@ -1156,7 +1160,7 @@ class ResultWindow(Window):
         right_layout.addStretch()
 
         self.card2 = CardWidget(rows=6, cols=9, active=CARD2_SIZE)
-        self.card2.cell_clicked.connect(self.on_card2_click)
+        self.card2.cell_clicked.connect(self.on_card2_click)  # type: ignore
         right_layout.addWidget(self.card2)
 
         main_layout.addWidget(left, stretch=1)
@@ -1427,7 +1431,7 @@ class ResultWindow(Window):
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
-        QMessageBox.information(self, "Успех", f"Результат сохранён в {RESULTS_FILE}")
+        QMessageBox.information(self, "Успешно", f"Результат сохранён в {RESULTS_FILE}")
 
     def check_changes(self, old_date: str):
         """Проверка на несохраненные изменения"""
@@ -1448,6 +1452,10 @@ class ResultWindow(Window):
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.on_save(old_date)
+
+    def closeEvent(self, event):
+        self.check_changes(self.current_date)
+        event.accept()
 
     def open_main_window(self):
         self.check_changes(self.current_date)
@@ -1506,7 +1514,7 @@ class WinningWindow(Window):
 
         self.list_winnings = QListWidget()
         self.list_winnings.setStyleSheet('color: #203764; font-size: 16px')
-        self.list_winnings.currentRowChanged.connect(self._on_selection_changed)
+        self.list_winnings.currentRowChanged.connect(self._on_selection_changed)  # type: ignore
         left_layout.addWidget(self.list_winnings)
 
         panels_layout.addWidget(left_panel, stretch=1)
@@ -1539,8 +1547,8 @@ class WinningWindow(Window):
         self.table_sets.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.table_sets.setColumnWidth(0, 200)
         self.table_sets.setColumnWidth(2, 80)
-        self.table_sets.itemChanged.connect(self._on_nominal_changed)
-        self.table_sets.itemClicked.connect(self._on_type_cell_clicked)
+        self.table_sets.itemChanged.connect(self._on_nominal_changed)  # type: ignore
+        self.table_sets.itemClicked.connect(self._on_type_cell_clicked)  # type: ignore
         right_layout.addWidget(self.table_sets)
 
         panels_layout.addWidget(right_panel, stretch=2)
@@ -1791,8 +1799,8 @@ class WinningWindow(Window):
             return
 
         reply = QMessageBox.question(self, "Удаление схемы",
-                                    f"Вы действительно хотите удалить схему «{name}»?",
-                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                                     f"Вы действительно хотите удалить схему «{name}»?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
             return
         del self.winning_data[name]
@@ -1810,7 +1818,7 @@ class WinningWindow(Window):
                 return
 
         save_all_winnings(self.winning_data)
-        QMessageBox.information(self, "Успех", f"Результат сохранён в {WINNINGS_FILE}")
+        QMessageBox.information(self, "Успешно", f"Результат сохранён в {WINNINGS_FILE}")
         self.trigger_to_save = False
 
     def closeEvent(self, event):
