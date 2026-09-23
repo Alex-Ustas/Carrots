@@ -1,11 +1,13 @@
 # TODO:
-#   - Добавить статистику
 
 import sys, json, random, os, re
 from datetime import datetime as dt
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass, asdict, field
 from copy import deepcopy
+import matplotlib.pyplot as plt
+from matplotlib.dates import DateFormatter, date2num
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout, QTableWidget,
                              QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea, QSpinBox,
@@ -13,7 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal, Qt
 
-VERSION = '1.11 (2026.09)'
+VERSION = '1.12 (2026.09)'
 DATA_DIR = "data"
 TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -224,6 +226,43 @@ class Result:
             return True
         return False
 
+    def calculate_winnings_for_tickets(self, winning_scheme: 'Winning', tickets_source: TicketSets) \
+            -> Tuple[int, int, int]:
+        """
+        Рассчитывает суммарный выигрыш (в 'м.' и 'б.') и затраты
+        для всех валидных билетов из tickets по текущему результату.
+        Возвращает: (won_m, won_b, spent).
+        """
+        valid_count = 0
+        won_m = 0
+        won_b = 0
+
+        for ticket_set in tickets_source.sets:
+            for ticket in ticket_set:
+                if not ticket.is_valid():
+                    continue
+
+                valid_count += 1
+
+                x = len(set(ticket.first_card_selected) & set(self.first_card_selected))
+                y = (
+                    1
+                    if (ticket.second_card_selected is not None
+                        and ticket.second_card_selected == self.second_card_selected)
+                    else 0
+                )
+
+                prize = winning_scheme.sets.get((x, y))
+                if prize:
+                    amount, kind = prize
+                    if kind == 'м.':
+                        won_m += amount
+                    elif kind == 'б.':
+                        won_b += amount
+
+        spent = valid_count * tickets_source.cost
+        return won_m, won_b, spent
+
 
 @dataclass
 class Winning:
@@ -353,6 +392,8 @@ class WelcomeWindow(Window):
         button_results.clicked.connect(self.open_results_window)
         button_winning = Button('Схемы призов', fixed_height=50)
         button_winning.clicked.connect(self.open_winning_window)
+        button_stat = Button('Статистика', fixed_height=50)
+        button_stat.clicked.connect(self.open_stat_window)
         button_about = Button('О программе', fixed_height=50)
         button_about.clicked.connect(self.on_click_about)
 
@@ -360,6 +401,7 @@ class WelcomeWindow(Window):
         main_v_layout.addWidget(button_input)
         main_v_layout.addWidget(button_results)
         main_v_layout.addWidget(button_winning)
+        main_v_layout.addWidget(button_stat)
         main_v_layout.addWidget(button_about)
         self.setLayout(main_v_layout)
 
@@ -375,6 +417,11 @@ class WelcomeWindow(Window):
 
     def open_winning_window(self):
         self.window = WinningWindow()
+        self.window.show()
+        self.close()
+
+    def open_stat_window(self):
+        self.window = StatisticWindow()
         self.window.show()
         self.close()
 
@@ -1363,34 +1410,16 @@ class ResultWindow(Window):
             return
 
         win_data = self.winning_data[self.win_combo.currentText()]
-        ts = self.ticket_data[self.current_date]
+        ticket_data = self.ticket_data[self.current_date]
+        if self.current_date not in self.results_data:
+            res_data = Result(self.current_date,
+                              self.win_combo.currentText(),
+                              list(self.result_first),
+                              self.result_second)
+        else:
+            res_data = self.results_data[self.current_date]
+        won_m, won_b, spent = res_data.calculate_winnings_for_tickets(win_data, ticket_data)
 
-        valid_count = 0
-        won_m = 0  # сумма в 'м.'
-        won_b = 0  # сумма в 'б.'
-
-        result_first_set = self.result_first
-        result_second = self.result_second
-
-        for ticket_set in ts.sets:
-            for ticket in ticket_set:
-                if not ticket.is_valid():
-                    continue
-                valid_count += 1
-
-                x = len(set(ticket.first_card_selected) & result_first_set)
-                y = 1 if (ticket.second_card_selected is not None and
-                          ticket.second_card_selected == result_second) else 0
-
-                key = (x, y)
-                if key in win_data.sets:
-                    amount, kind = win_data.sets[key]
-                    if kind == 'м.':
-                        won_m += amount
-                    elif kind == 'б.':
-                        won_b += amount
-
-        spent = valid_count * ts.cost
         won_text = f'{won_m:,d}🥕, ' if won_m else ''
         won_text += f'{won_b:,d}💵' if won_b else ''
         if won_m or won_b:
@@ -1856,6 +1885,164 @@ class WinningWindow(Window):
     #     if dialog.exec() == QDialog.DialogCode.Accepted:
     #         return dialog.all_winnings
     #     return None
+
+
+class StatisticWindow(Window):
+    def __init__(self, date: str = ''):
+        super().__init__("Статистика выигрышей по датам")
+        self.results_data: Dict[str, Result] = load_all_results()
+        self.ticket_data: Dict[str, TicketSets] = load_all_tickets()
+        self.winning_data: Dict[str, Winning] = load_all_winnings()
+
+        self._init_ui()
+
+    def _init_ui(self):
+        main_layout = QVBoxLayout()
+
+        # Холст для графика
+        self.figure = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setMinimumSize(400, 300)  # минимальный размер
+        self.canvas.mpl_connect('motion_notify_event', self.on_motion)
+        main_layout.addWidget(self.canvas, stretch=1)
+
+        # Метка для показа значений при наведении
+        self.lbl_hover = QLabel("Наведите на график, чтобы увидеть детали")
+        self.lbl_hover.setStyleSheet("font-size: 13px; font-weight: bold; color: green; padding: 5px;")
+        main_layout.addWidget(self.lbl_hover)
+
+        # --- Нижние кнопки ---
+        bottom_layout = QHBoxLayout()
+
+        # Кнопка обновления (если данные могли измениться)
+        btn_refresh = Button("Обновить график", fixed_width=180)
+        btn_refresh.clicked.connect(self.refresh_chart)  # type: ignore
+        bottom_layout.addWidget(btn_refresh)
+
+        bottom_layout.addStretch()
+
+        btn_back = Button("Назад", fixed_width=180)
+        btn_back.clicked.connect(self.open_main_window)
+        bottom_layout.addWidget(btn_back)
+
+        main_layout.addLayout(bottom_layout)
+
+        self.setLayout(main_layout)
+
+        # Построить график при открытии окна
+        self.refresh_chart()
+
+    def refresh_chart(self):
+        """Пересчитывает данные и перерисовывает график на существующем Figure."""
+        dates_sorted, wins_m, wins_b = self._prepare_data()
+
+        if not dates_sorted:
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+            ax.text(0.5, 0.5, "Нет данных для отображения",
+                    transform=ax.transAxes, ha='center', va='center')
+            ax.axis('off')
+            self.canvas.draw()
+            return
+
+        # Очищаем фигуру и рисуем заново
+        self.figure.clear()
+        ax1 = self.figure.add_subplot(111)
+
+        color_m = '#2e7d32'
+        ax1.plot(dates_sorted, wins_m, color=color_m, marker='o', linewidth=2,
+                 markersize=6, label='Выигрыш (м.)', zorder=3)
+        ax1.fill_between(dates_sorted, wins_m, alpha=0.1, color=color_m, zorder=2)
+        ax1.set_xlabel('Дата розыгрыша', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Выигрыш в морковках', fontsize=12, color=color_m, fontweight='bold')
+        ax1.tick_params(axis='y', labelcolor=color_m)
+        ax1.set_ylim(bottom=0)
+
+        ax2 = ax1.twinx()
+        color_b = '#1565c0'
+        x_pos = date2num(dates_sorted)
+        ax2.bar(x_pos, wins_b, width=0.4, color=color_b, alpha=0.7,
+                label='Выигрыш (б.)', zorder=1, edgecolor=color_b, linewidth=1.5)
+        ax2.set_ylabel('Выигрыш в баллах', fontsize=12, color=color_b, fontweight='bold')
+        ax2.tick_params(axis='y', labelcolor=color_b)
+        ax2.set_ylim(0, max(wins_b) * 1.2 if max(wins_b) > 0 else 100)
+
+        ax1.xaxis.set_major_formatter(DateFormatter('%d.%m.%y'))
+        for label in ax1.get_xticklabels():
+            label.set_rotation(30)
+            # label.set_ha('right')
+
+        ax1.grid(True, alpha=0.3, linestyle='--')
+
+        # Подписи значений
+        for d, b_val in zip(dates_sorted, wins_b):
+            if b_val > 0:
+                ax2.annotate(str(b_val), (date2num(d), b_val),
+                             textcoords="offset points", xytext=(0, 5),
+                             ha='center', fontsize=9, color=color_b)
+
+        ax1.set_title('Выигрыши по розыгрышам', fontsize=14, fontweight='bold', pad=15)
+
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
+
+        self.figure.tight_layout()
+        self.canvas.draw()  # перерисовка
+
+    def _prepare_data(self):
+        """Возвращает три списка: даты (datetime), выигрыши м., выигрыши б."""
+        dates_sorted = []
+        wins_m = []
+        wins_b = []
+
+        for date_str in sorted(self.results_data.keys(),
+                               key=lambda d: dt.strptime(d, '%d.%m.%y')):
+            result = self.results_data[date_str]
+            ticket_data = self.ticket_data.get(date_str)
+            if not ticket_data:
+                continue
+
+            win_set = self.winning_data.get(ticket_data.win_set, {})
+            won_m, won_b, spent = result.calculate_winnings_for_tickets(win_set, ticket_data)
+
+            dates_sorted.append(dt.strptime(date_str, '%d.%m.%y'))
+            wins_m.append(won_m)
+            wins_b.append(won_b)
+
+        return dates_sorted, wins_m, wins_b
+
+    def on_motion(self, event):
+        if event.inaxes is None:
+            self.lbl_hover.setText("Наведите на график, чтобы увидеть детали")
+            return
+
+        # Получаем данные, которые сейчас на графике
+        dates_sorted, wins_m, wins_b = self._prepare_data()
+        if not dates_sorted:
+            return
+
+        xdata = event.xdata
+        ydata = event.ydata
+
+        # Ищем ближайшую дату (по оси X)
+        # xdata — это float (date2num), сравниваем с date2num от дат
+        xvals = [date2num(d) for d in dates_sorted]
+
+        best_idx = min(range(len(xvals)), key=lambda i: abs(xvals[i] - xdata))
+        date_str = dates_sorted[best_idx].strftime('%d.%m.%y')
+        m_val = wins_m[best_idx]
+        b_val = wins_b[best_idx]
+
+        text = f"Дата: {date_str}"
+        text += f" | Морковки: {m_val} 🥕" if m_val else ''
+        text += f" | Баллы: {b_val} 💵" if b_val else ''
+        self.lbl_hover.setText(text)
+
+    def open_main_window(self):
+        self.window = WelcomeWindow()
+        self.window.show()
+        self.close()
 
 
 def change_style(widget, parameter: str, value: str):
