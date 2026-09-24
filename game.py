@@ -987,7 +987,20 @@ class TicketWindow(Window):
             self._update_radio_buttons()
             return
 
-        for idx in random.sample(free1, 7):
+        # --- Отбор свободных ячеек для первой карточки ---
+        # Ищем комбинацию, в которой пересечение с любым из 3-х предыдущих результатов не более двух раз
+        count = 0
+        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        cur_date = self.current_date if is_valid_date(self.current_date) else dt.now().strftime('%d.%m.%y')
+        dates = list(filter(lambda d: dt.strptime(d, '%d.%m.%y') < dt.strptime(cur_date, '%d.%m.%y'), dates))
+        nums = [set(self.results_data[d].first_card_selected) for d in dates
+                if self.results_data[d].first_card_selected][:3]
+        rnd = random.sample(free1, 7)
+        if len(free1) > 7 and nums:
+            while any(map(lambda n: len(n & set(rnd)) > 2, nums)) and count < 100:
+                rnd = random.sample(free1, 7)
+                count += 1
+        for idx in rnd:
             self.first_card[idx] = ticket
 
         # --- Отбор свободных ячеек для второй карточки ---
@@ -1009,13 +1022,13 @@ class TicketWindow(Window):
         self._render_cards()
         self._update_radio_buttons()
         self._sync_to_data()
+        self._update_total_cost_text()
 
     def on_generate(self):
         if not self._check_validity():
             return
         self._sync_to_data()
         self._generator(self.selected_ticket_index + 1)
-        self._update_total_cost_text()
 
     def on_generate_all(self):
         if not self._check_validity():
@@ -1024,7 +1037,6 @@ class TicketWindow(Window):
         self._sync_to_data()
         for i in range(1, 6):
             self._generator(i)
-        self._update_total_cost_text()
 
     def _sync_to_data(self):
         """Записывает текущее состояние карточек в self.tickets_data"""
@@ -1044,11 +1056,11 @@ class TicketWindow(Window):
 
         tickets: List[Ticket] = []
         for ticket in range(1, 6):
-            first_indices = [i for i, v in enumerate(self.first_card) if v == ticket]
+            first_idx = [i for i, v in enumerate(self.first_card) if v == ticket]
             second_idx = next((i for i, v in enumerate(self.second_card) if v == ticket), None)
-            if first_indices or second_idx is not None:
+            if first_idx or second_idx is not None:
                 tickets.append(Ticket(ticket=ticket,
-                                      first_card_selected=first_indices,
+                                      first_card_selected=first_idx,
                                       second_card_selected=second_idx))
 
         data.sets[self.current_set_index] = tickets
