@@ -11,11 +11,11 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout, QTableWidget,
                              QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea, QSpinBox,
-                             QHeaderView, QTableWidgetItem, QInputDialog, QListWidget)
+                             QHeaderView, QTableWidgetItem, QInputDialog, QListWidget, QTabWidget)
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal, Qt
 
-VERSION = '1.12 (2026.09)'
+VERSION = '1.13 (2026.09)'
 DATA_DIR = "data"
 TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -1901,7 +1901,7 @@ class WinningWindow(Window):
 
 class StatisticWindow(Window):
     def __init__(self, date: str = ''):
-        super().__init__("Статистика выигрышей по датам")
+        super().__init__('Статистика', width=900, height=650)
         self.results_data: Dict[str, Result] = load_all_results()
         self.ticket_data: Dict[str, TicketSets] = load_all_tickets()
         self.winning_data: Dict[str, Winning] = load_all_winnings()
@@ -1911,62 +1911,169 @@ class StatisticWindow(Window):
     def _init_ui(self):
         main_layout = QVBoxLayout()
 
-        # Холст для графика
-        self.figure = plt.Figure(figsize=(12, 6), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setMinimumSize(400, 300)  # минимальный размер
-        self.canvas.mpl_connect('motion_notify_event', self.on_motion)
-        main_layout.addWidget(self.canvas, stretch=1)
+        # Вкладки
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_winnings_tab(), "Выигрыши")
+        self.tabs.addTab(self._build_efficiency_tab(), "Эффективность")
+        self.tabs.setStyleSheet('color: #203764; font-size: 14px; font-weight: bold')
+        main_layout.addWidget(self.tabs, stretch=1)
 
-        # Метка для показа значений при наведении
-        self.lbl_hover = QLabel("Наведите на график, чтобы увидеть детали")
-        self.lbl_hover.setStyleSheet("font-size: 13px; font-weight: bold; color: green; padding: 5px;")
-        main_layout.addWidget(self.lbl_hover)
-
-        # --- Нижние кнопки ---
-        bottom_layout = QHBoxLayout()
-
-        # Кнопка обновления (если данные могли измениться)
-        btn_refresh = Button("Обновить график", fixed_width=180)
-        btn_refresh.clicked.connect(self.refresh_chart)  # type: ignore
-        bottom_layout.addWidget(btn_refresh)
-
-        bottom_layout.addStretch()
-
+        # Нижняя строка с кнопками
+        btn_row = QHBoxLayout()
+        btn_refresh = Button("Обновить графики", fixed_width=180)
+        btn_refresh.clicked.connect(self.refresh_all)
+        btn_row.addWidget(btn_refresh)
+        btn_row.addStretch()
         btn_back = Button("Назад", fixed_width=180)
         btn_back.clicked.connect(self.open_main_window)
-        bottom_layout.addWidget(btn_back)
-
-        main_layout.addLayout(bottom_layout)
+        btn_row.addWidget(btn_back)
+        main_layout.addLayout(btn_row)
 
         self.setLayout(main_layout)
+        self.refresh_all()
 
-        # Построить график при открытии окна
-        self.refresh_chart()
+    def _build_winnings_tab(self) -> QWidget:
+        """Вкладка «Выигрыши» — линейный график (м.) + столбцы (б.)"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
 
-    def refresh_chart(self):
-        """Пересчитывает данные и перерисовывает график на существующем Figure."""
-        dates_sorted, wins_m, wins_b = self._prepare_data()
+        self.figure_winnings = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_winnings = FigureCanvas(self.figure_winnings)
+        self.canvas_winnings.mpl_connect('motion_notify_event', self.on_motion_in_winnings)
+        layout.addWidget(self._wrap_in_frame(self.canvas_winnings), stretch=1)
+
+        self.lbl_hover_winnings = Label('Наведите на график, чтобы увидеть детали')
+        layout.addWidget(self.lbl_hover_winnings)
+
+        return tab
+
+    def _build_efficiency_tab(self) -> QWidget:
+        """Вкладка «Эффективность» — линейный график (won_m + won_b * 50) / spent"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.figure_efficiency = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_efficiency = FigureCanvas(self.figure_efficiency)
+        self.canvas_efficiency.mpl_connect('motion_notify_event', self.on_motion_in_efficiency)
+        layout.addWidget(self._wrap_in_frame(self.canvas_efficiency), stretch=1)
+
+        self.lbl_hover_efficiency = Label('Эффективность = (морковки + баллы × 50) / затраты')
+        layout.addWidget(self.lbl_hover_efficiency)
+
+        return tab
+
+    def _wrap_in_frame(self, canvas: FigureCanvas) -> QFrame:
+        """Оборачивает холст в рамку."""
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setStyleSheet("""
+            QFrame {
+                border: 2px solid black;
+                background-color: white;
+            }
+        """)
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.addWidget(canvas)
+        return frame
+
+    # --- Данные ---
+
+    def _prepare_data(self) -> Tuple[list, list, list, list]:
+        """Возвращает: dates (datetime), wins_m, wins_b, spent."""
+        dates_sorted = []
+        wins_m = []
+        wins_b = []
+        spent_list = []
+
+        for date_str in sorted(self.results_data.keys(),
+                               key=lambda d: dt.strptime(d, '%d.%m.%y')):
+            result = self.results_data[date_str]
+            ticket_data = self.ticket_data.get(date_str)
+            if not ticket_data:
+                continue
+
+            win_scheme = self.winning_data.get(ticket_data.win_set)
+            if not win_scheme:
+                continue
+
+            won_m, won_b, spent = result.calculate_winnings_for_tickets(win_scheme, ticket_data)
+
+            dates_sorted.append(dt.strptime(date_str, '%d.%m.%y'))
+            wins_m.append(won_m)
+            wins_b.append(won_b)
+            spent_list.append(spent)
+
+        return dates_sorted, wins_m, wins_b, spent_list
+
+    def _on_motion_data(self, event, lbl: Label, text: str) -> Optional[Tuple[str, int, int, int]]:
+        if event.inaxes is None:
+            lbl.setText(text)
+            return None
+
+        # Получаем данные, которые сейчас на графике
+        dates_sorted, wins_m, wins_b, spent = self._prepare_data()
+        if not dates_sorted:
+            return None
+
+        xdata = event.xdata
+        ydata = event.ydata
+
+        # Ищем ближайшую дату (по оси X)
+        # xdata — это float (date2num), сравниваем с date2num от дат
+        xvals = [date2num(d) for d in dates_sorted]
+        best_idx = min(range(len(xvals)), key=lambda i: abs(xvals[i] - xdata))
+        date_str = dates_sorted[best_idx].strftime('%d.%m.%y')
+        return date_str, wins_m[best_idx], wins_b[best_idx], spent[best_idx]
+
+    def on_motion_in_winnings(self, event):
+        data = self._on_motion_data(event, self.lbl_hover_winnings, 'Наведите на график, чтобы увидеть детали')
+        if data is None:
+            return
+        date_str, m_val, b_val, s = data
+        text = f"Дата: {date_str} | Потрачено: {s} 🥕"
+        text += f" | Морковки: {m_val} 🥕" if m_val else ''
+        text += f" | Баллы: {b_val} 💵" if b_val else ''
+        self.lbl_hover_winnings.setText(text)
+
+    def on_motion_in_efficiency(self, event):
+        data = self._on_motion_data(event, self.lbl_hover_efficiency, 'Эффективность = (морковки + баллы × 50) / затраты')
+        if data is None:
+            return
+        date_str, m_val, b_val, s = data
+
+        text = f"Дата: {date_str} | Эффективность = ("
+        text += f"{m_val}🥕" if m_val else ''
+        text += ' + ' if m_val and b_val else ''
+        text += f"{b_val}💵 × 50" if b_val else ''
+        text += f') / {s} = {round((m_val + b_val * 50) / s, 2) if s else 0}'
+        self.lbl_hover_efficiency.setText(text)
+
+    # --- Отрисовка ---
+
+    def refresh_all(self):
+        """Перерисовывает оба графика."""
+        self._draw_winnings_chart()
+        self._draw_efficiency_chart()
+
+    def _draw_winnings_chart(self):
+        dates_sorted, wins_m, wins_b, _ = self._prepare_data()
+
+        self.figure_winnings.clear()
 
         if not dates_sorted:
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            ax.text(0.5, 0.5, "Нет данных для отображения",
-                    transform=ax.transAxes, ha='center', va='center')
-            ax.axis('off')
-            self.canvas.draw()
+            self._draw_empty(self.figure_winnings, "Нет данных для отображения")
+            self.canvas_winnings.draw()
             return
 
-        # Очищаем фигуру и рисуем заново
-        self.figure.clear()
-        ax1 = self.figure.add_subplot(111)
+        ax1 = self.figure_winnings.add_subplot(111)
 
         color_m = '#2e7d32'
         ax1.plot(dates_sorted, wins_m, color=color_m, marker='o', linewidth=2,
-                 markersize=6, label='Выигрыш (м.)', zorder=3)
+                 markersize=8, label='Выигрыш (м.)', zorder=3)
         ax1.fill_between(dates_sorted, wins_m, alpha=0.1, color=color_m, zorder=2)
         ax1.set_xlabel('Дата розыгрыша', fontsize=12, fontweight='bold')
-        ax1.set_ylabel('Выигрыш в морковках', fontsize=12, color=color_m, fontweight='bold')
+        ax1.set_ylabel('Морковки', fontsize=12, color=color_m, fontweight='bold')
         ax1.tick_params(axis='y', labelcolor=color_m)
         ax1.set_ylim(bottom=0)
 
@@ -1975,7 +2082,7 @@ class StatisticWindow(Window):
         x_pos = date2num(dates_sorted)
         ax2.bar(x_pos, wins_b, width=0.4, color=color_b, alpha=0.7,
                 label='Выигрыш (б.)', zorder=1, edgecolor=color_b, linewidth=1.5)
-        ax2.set_ylabel('Выигрыш в баллах', fontsize=12, color=color_b, fontweight='bold')
+        ax2.set_ylabel('Баллы', fontsize=12, color=color_b, fontweight='bold')
         ax2.tick_params(axis='y', labelcolor=color_b)
         ax2.set_ylim(0, max(wins_b) * 1.2 if max(wins_b) > 0 else 100)
 
@@ -1983,7 +2090,6 @@ class StatisticWindow(Window):
         for label in ax1.get_xticklabels():
             label.set_rotation(30)
             # label.set_ha('right')
-
         ax1.grid(True, alpha=0.3, linestyle='--')
 
         # Подписи значений
@@ -1993,63 +2099,61 @@ class StatisticWindow(Window):
                              textcoords="offset points", xytext=(0, 5),
                              ha='center', fontsize=9, color=color_b)
 
-        ax1.set_title('Выигрыши по розыгрышам', fontsize=14, fontweight='bold', pad=15)
-
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
+        ax1.set_title('Выигрыши по розыгрышам', fontsize=14, fontweight='bold', pad=15)
 
-        self.figure.tight_layout()
-        self.canvas.draw()  # перерисовка
+        self.figure_winnings.tight_layout()
+        self.canvas_winnings.draw()
 
-    def _prepare_data(self):
-        """Возвращает три списка: даты (datetime), выигрыши м., выигрыши б."""
-        dates_sorted = []
-        wins_m = []
-        wins_b = []
+    def _draw_efficiency_chart(self):
+        dates_sorted, wins_m, wins_b, spent_list = self._prepare_data()
 
-        for date_str in sorted(self.results_data.keys(),
-                               key=lambda d: dt.strptime(d, '%d.%m.%y')):
-            result = self.results_data[date_str]
-            ticket_data = self.ticket_data.get(date_str)
-            if not ticket_data:
-                continue
+        self.figure_efficiency.clear()
 
-            win_set = self.winning_data.get(ticket_data.win_set, {})
-            won_m, won_b, spent = result.calculate_winnings_for_tickets(win_set, ticket_data)
-
-            dates_sorted.append(dt.strptime(date_str, '%d.%m.%y'))
-            wins_m.append(won_m)
-            wins_b.append(won_b)
-
-        return dates_sorted, wins_m, wins_b
-
-    def on_motion(self, event):
-        if event.inaxes is None:
-            self.lbl_hover.setText("Наведите на график, чтобы увидеть детали")
-            return
-
-        # Получаем данные, которые сейчас на графике
-        dates_sorted, wins_m, wins_b = self._prepare_data()
         if not dates_sorted:
+            self._draw_empty(self.figure_efficiency, "Нет данных для отображения")
+            self.canvas_efficiency.draw()
             return
 
-        xdata = event.xdata
-        ydata = event.ydata
+        # Считаем эффективность: (won_m + won_b * 50) / spent
+        efficiency = []
+        for m, b, spent in zip(wins_m, wins_b, spent_list):
+            if spent > 0:
+                eff = (m + b * 50) / spent
+            else:
+                eff = 0
+            efficiency.append(eff)
 
-        # Ищем ближайшую дату (по оси X)
-        # xdata — это float (date2num), сравниваем с date2num от дат
-        xvals = [date2num(d) for d in dates_sorted]
+        ax = self.figure_efficiency.add_subplot(111)
 
-        best_idx = min(range(len(xvals)), key=lambda i: abs(xvals[i] - xdata))
-        date_str = dates_sorted[best_idx].strftime('%d.%m.%y')
-        m_val = wins_m[best_idx]
-        b_val = wins_b[best_idx]
+        color_eff = '#6a1b9a'
+        ax.plot(dates_sorted, efficiency, color=color_eff, marker='s',
+                linewidth=2, markersize=6, label='Эффективность', zorder=3)
+        ax.fill_between(dates_sorted, efficiency, alpha=0.1, color=color_eff, zorder=2)
+        ax.axhline(y=1.0, color='#e53935', linestyle='--', linewidth=1.5, label='Безубыточность (1.0)', zorder=2)
 
-        text = f"Дата: {date_str}"
-        text += f" | Морковки: {m_val} 🥕" if m_val else ''
-        text += f" | Баллы: {b_val} 💵" if b_val else ''
-        self.lbl_hover.setText(text)
+        ax.set_xlabel('Дата розыгрыша', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Эффективность', fontsize=12, color=color_eff, fontweight='bold')
+        ax.tick_params(axis='y', labelcolor=color_eff)
+        ax.set_ylim(bottom=0, top=5)
+
+        ax.xaxis.set_major_formatter(DateFormatter('%d.%m.%y'))
+        for label in ax.get_xticklabels():
+            label.set_rotation(30)
+            # label.set_ha('right')
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.legend(loc='upper left', fontsize=10)
+        ax.set_title('Эффективность выигрышей', fontsize=14, fontweight='bold', pad=15)
+
+        self.figure_efficiency.tight_layout()
+        self.canvas_efficiency.draw()
+
+    def _draw_empty(self, figure, text: str):
+        ax = figure.add_subplot(111)
+        ax.text(0.5, 0.5, text, transform=ax.transAxes, ha='center', va='center', fontsize=14, color='#888')
+        ax.axis('off')
 
     def open_main_window(self):
         self.window = WelcomeWindow()
