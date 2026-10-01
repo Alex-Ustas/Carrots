@@ -11,11 +11,11 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout, QTableWidget,
                              QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea, QSpinBox,
-                             QHeaderView, QTableWidgetItem, QInputDialog, QListWidget, QTabWidget)
+                             QHeaderView, QTableWidgetItem, QInputDialog, QListWidget, QTabWidget, QLineEdit)
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal, Qt
 
-VERSION = '1.13 (2026.09)'
+VERSION = '1.14 (2026.09)'
 DATA_DIR = "data"
 TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
 RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
@@ -36,6 +36,7 @@ COLORS = [
     QColor("#ffaaaa"),  # 5 — светло-красный
 ]
 RESULT_COLOR = QColor("#FFC000")
+TEXT_COLOR = '#203764'  # тёмно-синий
 
 
 def choose_plural(amount: int, declensions: Tuple[str, str, str]) -> str:
@@ -296,23 +297,35 @@ class Winning:
 class Label(QLabel):
     def __init__(self, text: str, fixed_width=0, fixed_height=30):
         super().__init__(text)
-        self.setStyleSheet('color: #203764; font-size: 16px; font-weight: bold')
+        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px; font-weight: bold')
         if fixed_width:
             self.setFixedWidth(fixed_width)
         if fixed_height:
             self.setFixedHeight(fixed_height)
 
 
+class EditBox(QLineEdit):
+    def __init__(self, text='', fixed_width=0, fixed_height=30, date_mask=False):
+        super().__init__(text)
+        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px; font-weight: bold')
+        if fixed_width:
+            self.setFixedWidth(fixed_width)
+        if fixed_height:
+            self.setFixedHeight(fixed_height)
+        if date_mask:
+            self.setInputMask('99.99.99;_')
+
+
 class Button(QPushButton):
     def __init__(self, text: str, fixed_width=0, fixed_height=40, icon_size=16):
         super().__init__()
         self.setText(text)
-        self.setStyleSheet("""
-            QPushButton {font-size: 16px; font-weight: bold; color: #203764; border: 2px groove #c0c0c0; border-radius: 6px;
+        self.setStyleSheet(f"""
+            QPushButton {{font-size: 16px; font-weight: bold; color: {TEXT_COLOR}; border: 2px groove #c0c0c0; border-radius: 6px;
             background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-            stop: 0 #f0f0f0, stop: 1 #d0d0d0)}
-            QPushButton::disabled {background-color: #D9D9D9; color: gray; font-weight: bold}
-            QPushButton::hover {background-color: #203764; color: white; font-weight: bold}
+            stop: 0 #f0f0f0, stop: 1 #d0d0d0)}}
+            QPushButton::disabled {{background-color: #D9D9D9; color: gray; font-weight: bold}}
+            QPushButton::hover {{background-color: {TEXT_COLOR}; color: white; font-weight: bold}}
             """)
         self.setIconSize(QSize(icon_size, icon_size))
         if fixed_width:
@@ -325,8 +338,8 @@ class CardButton(QPushButton):
     def __init__(self, text: str):
         super().__init__()
         self.setText(text)
-        self.setStyleSheet("""
-            font-size: 14px; font-weight: bold; color: #203764; border: 1px solid black; border-radius: 6px;
+        self.setStyleSheet(f"""
+            font-size: 14px; font-weight: bold; color: {TEXT_COLOR}; border: 1px solid black; border-radius: 6px;
             background-color: white;
             """)
         self.setFixedSize(40, 40)
@@ -335,7 +348,7 @@ class CardButton(QPushButton):
 class ComboList(QComboBox):
     def __init__(self, fixed_width=0, fixed_height=30, editable=False, date_mask=False):
         super().__init__()
-        self.setStyleSheet('color: #203764; font-size: 16px')
+        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px')
         self.setMaxVisibleItems(10)
         self.setEditable(editable)
         if fixed_width:
@@ -349,7 +362,7 @@ class ComboList(QComboBox):
 class EditSpin(QSpinBox):
     def __init__(self, fixed_width=0, fixed_height=30, maximum=1000, step=5):
         super().__init__()
-        self.setStyleSheet('color: #203764; font-size: 16px; font-weight: bold')
+        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px; font-weight: bold')
         if fixed_width:
             self.setFixedWidth(fixed_width)
         if fixed_height:
@@ -470,7 +483,7 @@ class CardWidget(QFrame):
         border = self._borders[idx]
         bg_str = bg.name() if bg else "white"
         border_str = f"4px solid {border}" if border else "1px solid black"
-        return (f"font-size: 14px; font-weight: bold; color: #203764; "
+        return (f"font-size: 14px; font-weight: bold; color: {TEXT_COLOR}; "
                 f"border: {border_str}; border-radius: 6px; "
                 f"background-color: {bg_str};")
 
@@ -571,7 +584,7 @@ class TicketWindow(Window):
             rb.setAutoExclusive(True)
             rb.setStyleSheet(
                 f'background-color: {color.name()}; padding: 6px; '
-                f'color: #203764; border: 1px solid #888; font-size: 16px; font-weight: bold; '
+                f'color: {TEXT_COLOR}; border: 1px solid #888; font-size: 16px; font-weight: bold; '
             )
             rb.clicked.connect(lambda _, idx=i: self._set_color(idx))  # type: ignore
             self.color_buttons.append(rb)
@@ -1389,7 +1402,7 @@ class ResultWindow(Window):
                     f"{x}+{y}={win_result[0]:,d}{win_result[1]}")
             btn = Button(text)
             btn.setStyleSheet(
-                f"font-size: 14px; font-weight: bold; color: #203764; "
+                f"font-size: 14px; font-weight: bold; color: {TEXT_COLOR}; "
                 f"border: 1px solid #888; border-radius: 4px; "
                 f"background-color: {color.name()}; padding: 6px;"
             )
@@ -1507,7 +1520,7 @@ class ResultWindow(Window):
 
 class WinningWindow(Window):
     def __init__(self):
-        super().__init__('Схемы призов', width=700, height=600)
+        super().__init__('Схемы призов', width=750, height=550)
         self.winning_data: Dict[str, Winning] = load_all_winnings()
         self.tickets_data: Dict[str, TicketSets] = load_all_tickets()
         self.results_data: Dict[str, Result] = load_all_results()
@@ -1554,7 +1567,7 @@ class WinningWindow(Window):
         left_layout.addLayout(left_btn_layout)
 
         self.list_winnings = QListWidget()
-        self.list_winnings.setStyleSheet('color: #203764; font-size: 16px')
+        self.list_winnings.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px')
         self.list_winnings.currentRowChanged.connect(self._on_selection_changed)  # type: ignore
         left_layout.addWidget(self.list_winnings)
 
@@ -1568,11 +1581,15 @@ class WinningWindow(Window):
         # Кнопки сверху
         btn_row = QHBoxLayout()
 
-        self.btn_save_set = Button("Сохранить", fixed_width=180)
+        btn_check_unics = Button("Проверить", fixed_width=120)
+        btn_check_unics.clicked.connect(self.on_check_unics)
+        btn_row.addWidget(btn_check_unics)
+
+        self.btn_save_set = Button("Сохранить", fixed_width=120)
         self.btn_save_set.clicked.connect(self.on_save_winning)
         btn_row.addWidget(self.btn_save_set)
 
-        btn_back = Button("Назад", fixed_width=180)
+        btn_back = Button("Назад", fixed_width=120)
         btn_back.clicked.connect(self.open_main_window)
         btn_row.addWidget(btn_back)
 
@@ -1580,7 +1597,7 @@ class WinningWindow(Window):
 
         # Таблица вариантов
         self.table_sets = QTableWidget()
-        self.table_sets.setStyleSheet('color: #203764; font-size: 16px')
+        self.table_sets.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px')
         self.table_sets.setColumnCount(3)
         self.table_sets.setHorizontalHeaderLabels(["Вариант", "Номинал", "Тип"])
         self.table_sets.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -1849,6 +1866,19 @@ class WinningWindow(Window):
         self._clear_edit_form()
         self.trigger_to_save = True
 
+    def on_check_unics(self):
+        schemes = list(self.winning_data.keys())
+        doubles = []
+        for i in range(len(schemes) - 1):
+            for j in range(i + 1, len(schemes)):
+                if self.winning_data[schemes[i]].sets == self.winning_data[schemes[j]].sets:
+                    doubles.append(f'{schemes[i]} и {schemes[j]}')
+        if doubles:
+            QMessageBox.warning(self, "Проверка на дубликаты",
+                                f"Обнаружены дубликаты схем:\n" + '\n'.join(doubles))
+        else:
+            QMessageBox.information(self, 'Проверка на дубликаты', 'Дубликаты схем не обнаружены!')
+
     def on_save_winning(self):
         # Проверка незаполненных номиналов
         for scheme in self.winning_data:
@@ -1905,6 +1935,8 @@ class StatisticWindow(Window):
         self.results_data: Dict[str, Result] = load_all_results()
         self.ticket_data: Dict[str, TicketSets] = load_all_tickets()
         self.winning_data: Dict[str, Winning] = load_all_winnings()
+        self.start_date: Optional[dt.date] = None
+        self.end_date: Optional[dt.date] = None
 
         self._init_ui()
 
@@ -1915,21 +1947,67 @@ class StatisticWindow(Window):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_winnings_tab(), "Выигрыши")
         self.tabs.addTab(self._build_efficiency_tab(), "Эффективность")
-        self.tabs.setStyleSheet('color: #203764; font-size: 14px; font-weight: bold')
+        self.tabs.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 14px; font-weight: bold')
         main_layout.addWidget(self.tabs, stretch=1)
 
-        # Нижняя строка с кнопками
-        btn_row = QHBoxLayout()
+        # Нижняя строка с периодом и кнопками
+        bottom_row = QHBoxLayout()
+
+        bottom_row.addWidget(Label('Период: с'))
+        self.edit_start_date = EditBox(fixed_width=80, date_mask=True)
+        self.edit_start_date.textChanged.connect(self._on_start_date_changed)
+        bottom_row.addWidget(self.edit_start_date)
+
+        bottom_row.addWidget(Label('по'))
+        self.edit_end_date = EditBox(fixed_width=80, date_mask=True)
+        self.edit_end_date.textChanged.connect(self._on_end_date_changed)
+        bottom_row.addWidget(self.edit_end_date)
+
+        btn_init_dates = Button('', fixed_width=30, fixed_height=30)
+        btn_init_dates.setIcon(QIcon('images/arrow-up.png'))
+        btn_init_dates.clicked.connect(self.on_init_dates)
+        bottom_row.addWidget(btn_init_dates)
+
+        bottom_row.addSpacing(12)
+
         btn_refresh = Button("Обновить графики", fixed_width=180)
         btn_refresh.clicked.connect(self.refresh_all)
-        btn_row.addWidget(btn_refresh)
-        btn_row.addStretch()
+        bottom_row.addWidget(btn_refresh)
+
+        bottom_row.addStretch()
+
         btn_back = Button("Назад", fixed_width=180)
         btn_back.clicked.connect(self.open_main_window)
-        btn_row.addWidget(btn_back)
-        main_layout.addLayout(btn_row)
+        bottom_row.addWidget(btn_back)
+        main_layout.addLayout(bottom_row)
 
         self.setLayout(main_layout)
+        self.get_init_dates()
+        self.refresh_all()
+
+    def _on_start_date_changed(self):
+        if is_valid_date(self.edit_start_date.text()):
+            self.start_date = dt.strptime(self.edit_start_date.text(), '%d.%m.%y').date()
+        else:
+            self.start_date = None
+
+    def _on_end_date_changed(self):
+        if is_valid_date(self.edit_end_date.text()):
+            self.end_date = dt.strptime(self.edit_end_date.text(), '%d.%m.%y').date()
+        else:
+            self.end_date = None
+
+    def get_init_dates(self):
+        dates = sorted(self.results_data.keys(), key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        if dates:
+            self.edit_start_date.setText(dates[0])
+            self.edit_end_date.setText(dates[-1])
+        else:
+            self.edit_start_date.setText('')
+            self.edit_end_date.setText('')
+
+    def on_init_dates(self):
+        self.get_init_dates()
         self.refresh_all()
 
     def _build_winnings_tab(self) -> QWidget:
@@ -1981,13 +2059,15 @@ class StatisticWindow(Window):
 
     def _prepare_data(self) -> Tuple[list, list, list, list]:
         """Возвращает: dates (datetime), wins_m, wins_b, spent."""
+        dates = sorted(self.results_data.keys(), key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        if self.start_date and self.end_date:
+            dates = list(filter(lambda d: self.start_date <= dt.strptime(d, '%d.%m.%y').date() <= self.end_date, dates))
         dates_sorted = []
         wins_m = []
         wins_b = []
         spent_list = []
 
-        for date_str in sorted(self.results_data.keys(),
-                               key=lambda d: dt.strptime(d, '%d.%m.%y')):
+        for date_str in dates:
             result = self.results_data[date_str]
             ticket_data = self.ticket_data.get(date_str)
             if not ticket_data:
@@ -2037,22 +2117,31 @@ class StatisticWindow(Window):
         self.lbl_hover_winnings.setText(text)
 
     def on_motion_in_efficiency(self, event):
-        data = self._on_motion_data(event, self.lbl_hover_efficiency, 'Эффективность = (морковки + баллы × 50) / затраты')
+        data = self._on_motion_data(event, self.lbl_hover_efficiency,
+                                    'Эффективность = (морковки + баллы × 50) / затраты')
         if data is None:
             return
         date_str, m_val, b_val, s = data
 
-        text = f"Дата: {date_str} | Эффективность = ("
-        text += f"{m_val}🥕" if m_val else ''
-        text += ' + ' if m_val and b_val else ''
-        text += f"{b_val}💵 × 50" if b_val else ''
-        text += f') / {s} = {round((m_val + b_val * 50) / s, 2) if s else 0}'
+        text_m = f"{m_val}🥕" if m_val else ''
+        text_b = f"{b_val}💵 × 50" if b_val else ''
+        if not text_m and not text_b:
+            text = '0'
+        else:
+            text = f'({text_m} + {text_b})' if text_m and text_b else text_m or text_b
+        text = f"Дата: {date_str} | Эффективность = {text} / {s}🥕 = {round((m_val + b_val * 50) / s, 2) if s else 0}"
         self.lbl_hover_efficiency.setText(text)
 
     # --- Отрисовка ---
 
     def refresh_all(self):
         """Перерисовывает оба графика."""
+        if self.start_date is None or self.end_date is None:
+            QMessageBox.warning(self, "Даты не указаны", "Укажите корректные даты!")
+            return
+        if self.start_date >= self.end_date:
+            QMessageBox.warning(self, "Неверные даты", "Начальная дата периода должна быть меньше конечной!")
+            return
         self._draw_winnings_chart()
         self._draw_efficiency_chart()
 

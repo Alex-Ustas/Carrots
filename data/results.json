@@ -474,5 +474,33 @@
       30
     ],
     "second_card_selected": 51
+  },
+  {
+    "date": "28.09.26",
+    "win_set": "28-09-26",
+    "first_card_selected": [
+      1,
+      11,
+      17,
+      21,
+      23,
+      28,
+      29
+    ],
+    "second_card_selected": 21
+  },
+  {
+    "date": "01.10.26",
+    "win_set": "28-09-26",
+    "first_card_selected": [
+      2,
+      9,
+      11,
+      14,
+      16,
+      23,
+      30
+    ],
+    "second_card_selected": 4
   }
 ]
