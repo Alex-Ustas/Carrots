@@ -1,8 +1,9 @@
 # TODO:
 
-import sys, json, random, os, re
+import sys, json, random, re
+from pathlib import Path
 from datetime import datetime as dt
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, TypeVar, Callable
 from dataclasses import dataclass, asdict, field
 from copy import deepcopy
 import matplotlib.pyplot as plt
@@ -15,11 +16,13 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import QSize, pyqtSignal, Qt
 
-VERSION = '1.14 (2026.09)'
-DATA_DIR = "data"
-TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
-RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
-WINNINGS_FILE = os.path.join(DATA_DIR, "win_sets.json")
+VERSION = '1.15 (2026.10)'
+T = TypeVar("T")
+DATA_DIR = Path("data")
+TICKETS_FILE = DATA_DIR / "tickets.json"
+RESULTS_FILE = DATA_DIR / "results.json"
+WINNINGS_FILE = DATA_DIR / "win_sets.json"
+DATE_FORMAT = "%d.%m.%y"
 
 CARD1_SIZE = 35
 CARD2_SIZE = 54
@@ -56,71 +59,72 @@ def is_valid_date(date_str: str) -> bool:
     if not date_str:
         return False
     try:
-        dt.strptime(date_str, "%d.%m.%y")
+        dt.strptime(date_str, DATE_FORMAT)
         return True
     except ValueError:
         return False
 
 
 def ensure_data_dir():
-    os.makedirs(DATA_DIR, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_all_tickets() -> Dict[str, 'TicketSets']:
-    ensure_data_dir()
-    if not os.path.exists(TICKETS_FILE):
+# Общий шаблон загрузки списка объектов и построения словаря по ключу
+def _load_list_to_dict(
+        path: Path, item_from_dict: Callable[[dict], T], key_extractor: Callable[[dict], str]
+) -> Dict[str, T]:
+    if not path.exists():
         return {}
+
     try:
-        with open(TICKETS_FILE, "r", encoding="utf-8") as f:
+        with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        return {d["date"]: TicketSets.from_dict(d) for d in data}
-    except Exception:
+    except json.JSONDecodeError:
+        return {}
+    except OSError:
         return {}
 
+    result: Dict[str, T] = {}
+    for item_raw in data:
+        try:
+            key = key_extractor(item_raw)
+            obj = item_from_dict(item_raw)
+            result[key] = obj
+        except (KeyError, TypeError, ValueError):
+            continue
+    return result
 
-def save_all_tickets(data: Dict[str, 'TicketSets']):
+
+# Общий шаблон сохранения словаря как списка объектов
+def _save_dict_as_list(path: Path, data: Dict[str, T], item_to_dict: Callable[[T], dict]) -> None:
     ensure_data_dir()
-    serialized = [d.to_dict() for d in data.values()]
-    with open(TICKETS_FILE, "w", encoding="utf-8") as f:
+    serialized: List[dict] = [item_to_dict(v) for v in data.values()]
+    with path.open("w", encoding="utf-8") as f:
         json.dump(serialized, f, ensure_ascii=False, indent=2)
 
 
-def load_all_results() -> Dict[str, 'Result']:
-    ensure_data_dir()
-    if not os.path.exists(RESULTS_FILE):
-        return {}
-    try:
-        with open(RESULTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {r["date"]: Result.from_dict(r) for r in data}
-    except Exception:
-        return {}
+def load_all_tickets() -> Dict[str, "TicketSets"]:
+    return _load_list_to_dict(TICKETS_FILE, item_from_dict=TicketSets.from_dict, key_extractor=lambda d: d["date"])
 
 
-def save_all_results(data: Dict[str, 'Result']):
-    ensure_data_dir()
-    serialized = [r.to_dict() for r in data.values()]
-    with open(RESULTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(serialized, f, ensure_ascii=False, indent=2)
+def load_all_results() -> Dict[str, "Result"]:
+    return _load_list_to_dict(RESULTS_FILE, item_from_dict=Result.from_dict, key_extractor=lambda r: r["date"])
 
 
-def load_all_winnings() -> Dict[str, 'Winning']:
-    ensure_data_dir()
-    if not os.path.exists(WINNINGS_FILE):
-        return {}
-    try:
-        with open(WINNINGS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {w["name"]: Winning.from_dict(w) for w in data}
-    except Exception:
-        return {}
+def load_all_winnings() -> Dict[str, "Winning"]:
+    return _load_list_to_dict(WINNINGS_FILE, item_from_dict=Winning.from_dict, key_extractor=lambda w: w["name"])
 
 
-def save_all_winnings(data: Dict[str, "Winning"]):
-    ensure_data_dir()
-    serialized = [w.to_dict() for w in data.values()]
-    with open(WINNINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(serialized, f, ensure_ascii=False, indent=2)
+def save_all_tickets(data: Dict[str, "TicketSets"]) -> None:
+    _save_dict_as_list(TICKETS_FILE, data, item_to_dict=lambda ts: ts.to_dict())
+
+
+def save_all_results(data: Dict[str, "Result"]) -> None:
+    _save_dict_as_list(RESULTS_FILE, data, item_to_dict=lambda r: r.to_dict())
+
+
+def save_all_winnings(data: Dict[str, "Winning"]) -> None:
+    _save_dict_as_list(WINNINGS_FILE, data, item_to_dict=lambda w: w.to_dict())
 
 
 @dataclass
@@ -649,7 +653,7 @@ class TicketWindow(Window):
     # ── Логика переключения даты и набора ──
 
     def _refresh_dates(self):
-        dates = sorted(self.tickets_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.tickets_data.keys(), reverse=True, key=lambda d: dt.strptime(d, DATE_FORMAT))
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(dates)
@@ -685,7 +689,7 @@ class TicketWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.tickets_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
+            sorted(self.tickets_data.keys(), reverse=True, key=lambda d: dt.strptime(d, DATE_FORMAT)))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
@@ -840,9 +844,9 @@ class TicketWindow(Window):
     def calc_top_nums(self) -> Optional[List[List[int]]]:
         if len(self.results_data) == 0:
             return None
-        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
-        cur_date = self.current_date if is_valid_date(self.current_date) else dt.now().strftime('%d.%m.%y')
-        dates = list(filter(lambda d: dt.strptime(d, '%d.%m.%y') < dt.strptime(cur_date, '%d.%m.%y'), dates))
+        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, DATE_FORMAT))
+        cur_date = self.current_date if is_valid_date(self.current_date) else dt.now().strftime(DATE_FORMAT)
+        dates = list(filter(lambda d: dt.strptime(d, DATE_FORMAT) < dt.strptime(cur_date, DATE_FORMAT), dates))
         nums = [self.results_data[d].second_card_selected for d in dates
                 if self.results_data[d].second_card_selected is not None][:30]
         if not nums:
@@ -1003,9 +1007,9 @@ class TicketWindow(Window):
         # --- Отбор свободных ячеек для первой карточки ---
         # Ищем комбинацию, в которой пересечение с любым из 3-х предыдущих результатов не более двух раз
         count = 0
-        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
-        cur_date = self.current_date if is_valid_date(self.current_date) else dt.now().strftime('%d.%m.%y')
-        dates = list(filter(lambda d: dt.strptime(d, '%d.%m.%y') < dt.strptime(cur_date, '%d.%m.%y'), dates))
+        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, DATE_FORMAT))
+        cur_date = self.current_date if is_valid_date(self.current_date) else dt.now().strftime(DATE_FORMAT)
+        dates = list(filter(lambda d: dt.strptime(d, DATE_FORMAT) < dt.strptime(cur_date, DATE_FORMAT), dates))
         nums = [set(self.results_data[d].first_card_selected) for d in dates
                 if self.results_data[d].first_card_selected][:3]
         rnd = random.sample(free1, 7)
@@ -1106,7 +1110,7 @@ class TicketWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(sorted(self.tickets_data.keys(), reverse=True,
-                                        key=lambda d: dt.strptime(d, '%d.%m.%y')))
+                                        key=lambda d: dt.strptime(d, DATE_FORMAT)))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
@@ -1168,7 +1172,7 @@ class ResultWindow(Window):
         # Дата
         date_row = QHBoxLayout()
         self.date_combo = ComboList(fixed_width=105, editable=True, date_mask=True)
-        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y'))
+        dates = sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, DATE_FORMAT))
         self.date_combo.addItems(dates)
         self.date_combo.setCurrentText('')
         self.date_combo.currentTextChanged.connect(self._on_date_changed)
@@ -1270,7 +1274,7 @@ class ResultWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
+            sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, DATE_FORMAT)))
         self.date_combo.blockSignals(False)
         self.current_date = None
         self.date_combo.setCurrentText('')
@@ -1481,7 +1485,7 @@ class ResultWindow(Window):
         self.date_combo.blockSignals(True)
         self.date_combo.clear()
         self.date_combo.addItems(
-            sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, '%d.%m.%y')))
+            sorted(self.results_data.keys(), reverse=True, key=lambda d: dt.strptime(d, DATE_FORMAT)))
         self.date_combo.setCurrentText(self.current_date)
         self.date_combo.blockSignals(False)
 
@@ -1920,25 +1924,117 @@ class WinningWindow(Window):
         self.window.show()
         self.close()
 
-    # @staticmethod
-    # def open_editor(parent, all_winnings: Dict[str, 'Winning']) -> Optional[Dict[str, 'Winning']]:
-    #     """Статический метод для удобного вызова из другого окна"""
-    #     dialog = WinningEditorWindow(all_winnings)
-    #     if dialog.exec() == QDialog.DialogCode.Accepted:
-    #         return dialog.all_winnings
-    #     return None
+
+class StatisticsData:
+    """
+    Подготовка данных статистики по периоду.
+    Инкапсулирует фильтрацию по датам и расчёт метрик.
+    """
+
+    def __init__(
+        self,
+        results_data: Dict[str, Result],
+        ticket_data: Dict[str, TicketSets],
+        winning_data: Dict[str, Winning],
+    ):
+        self.results_data = results_data
+        self.ticket_data = ticket_data
+        self.winning_data = winning_data
+
+    @staticmethod
+    def parse_date(date_str: str) -> Optional[dt.date]:
+        if is_valid_date(date_str):
+            return dt.strptime(date_str, DATE_FORMAT).date()
+        return None
+
+    def prepare(
+        self,
+        start_date: Optional[dt.date],
+        end_date: Optional[dt.date],
+    ) -> Tuple[List[dt.date], List[int], List[int], List[float]]:
+        """
+        Возвращает:
+          - dates_sorted (date)
+          - wins_m (морковки)
+          - wins_b (баллы)
+          - spent (затраты)
+        """
+        all_dates = sorted(self.results_data.keys(), key=lambda d: self.parse_date(d))
+
+        filtered: List[str] = []
+        for d_str in all_dates:
+            d_date = self.parse_date(d_str)
+            if d_date is None:
+                continue
+            if start_date is not None and d_date < start_date:
+                continue
+            if end_date is not None and d_date > end_date:
+                continue
+            filtered.append(d_str)
+
+        dates_sorted: List[dt.date] = []
+        wins_m: List[int] = []
+        wins_b: List[int] = []
+        spent_list: List[float] = []
+
+        for date_str in filtered:
+            result = self.results_data.get(date_str)
+            ticket = self.ticket_data.get(date_str)
+            if not result or not ticket:
+                continue
+
+            win_scheme = self.winning_data.get(ticket.win_set)
+            if not win_scheme:
+                continue
+
+            m_val, b_val, spent = result.calculate_winnings_for_tickets(win_scheme, ticket)
+
+            d_date = self.parse_date(date_str)
+            if d_date is None:
+                continue
+            dates_sorted.append(d_date)
+            wins_m.append(m_val)
+            wins_b.append(b_val)
+            spent_list.append(spent)
+
+        return dates_sorted, wins_m, wins_b, spent_list
 
 
 class StatisticWindow(Window):
-    def __init__(self, date: str = ''):
-        super().__init__('Статистика', width=900, height=650)
+    FRAME_STYLE = "QFrame {border: 2px solid black; background-color: white;}"
+
+    def __init__(self, date: str = ""):
+        super().__init__("Статистика", width=900, height=650)
+
         self.results_data: Dict[str, Result] = load_all_results()
         self.ticket_data: Dict[str, TicketSets] = load_all_tickets()
         self.winning_data: Dict[str, Winning] = load_all_winnings()
+
+        self._stats = StatisticsData(self.results_data, self.ticket_data, self.winning_data)
+
         self.start_date: Optional[dt.date] = None
         self.end_date: Optional[dt.date] = None
 
+        # Кэш данных для обработчиков движения мыши
+        self._cached_dates: List[dt.date] = []
+        self._cached_wins_m: List[int] = []
+        self._cached_wins_b: List[int] = []
+        self._cached_spent: List[float] = []
+
+        self.figure_winnings = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_winnings = FigureCanvas(self.figure_winnings)
+
+        self.figure_efficiency = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_efficiency = FigureCanvas(self.figure_efficiency)
+
+        self.lbl_hover_winnings: Optional[Label] = None
+        self.lbl_hover_efficiency: Optional[Label] = None
+        self.edit_start_date: Optional[EditBox] = None
+        self.edit_end_date: Optional[EditBox] = None
+
         self._init_ui()
+
+    # --- UI ---
 
     def _init_ui(self):
         main_layout = QVBoxLayout()
@@ -1947,24 +2043,24 @@ class StatisticWindow(Window):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_winnings_tab(), "Выигрыши")
         self.tabs.addTab(self._build_efficiency_tab(), "Эффективность")
-        self.tabs.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 14px; font-weight: bold')
+        self.tabs.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 14px; font-weight: bold")
         main_layout.addWidget(self.tabs, stretch=1)
 
-        # Нижняя строка с периодом и кнопками
+        # Нижняя строка
         bottom_row = QHBoxLayout()
 
-        bottom_row.addWidget(Label('Период: с'))
+        bottom_row.addWidget(Label("Период: с"))
         self.edit_start_date = EditBox(fixed_width=80, date_mask=True)
         self.edit_start_date.textChanged.connect(self._on_start_date_changed)
         bottom_row.addWidget(self.edit_start_date)
 
-        bottom_row.addWidget(Label('по'))
+        bottom_row.addWidget(Label("по"))
         self.edit_end_date = EditBox(fixed_width=80, date_mask=True)
         self.edit_end_date.textChanged.connect(self._on_end_date_changed)
         bottom_row.addWidget(self.edit_end_date)
 
-        btn_init_dates = Button('', fixed_width=30, fixed_height=30)
-        btn_init_dates.setIcon(QIcon('images/arrow-up.png'))
+        btn_init_dates = Button("", fixed_width=30, fixed_height=30)
+        btn_init_dates.setIcon(QIcon("images/arrow-up.png"))
         btn_init_dates.clicked.connect(self.on_init_dates)
         bottom_row.addWidget(btn_init_dates)
 
@@ -1979,270 +2075,301 @@ class StatisticWindow(Window):
         btn_back = Button("Назад", fixed_width=180)
         btn_back.clicked.connect(self.open_main_window)
         bottom_row.addWidget(btn_back)
+
         main_layout.addLayout(bottom_row)
-
         self.setLayout(main_layout)
-        self.get_init_dates()
-        self.refresh_all()
 
-    def _on_start_date_changed(self):
-        if is_valid_date(self.edit_start_date.text()):
-            self.start_date = dt.strptime(self.edit_start_date.text(), '%d.%m.%y').date()
-        else:
-            self.start_date = None
-
-    def _on_end_date_changed(self):
-        if is_valid_date(self.edit_end_date.text()):
-            self.end_date = dt.strptime(self.edit_end_date.text(), '%d.%m.%y').date()
-        else:
-            self.end_date = None
-
-    def get_init_dates(self):
-        dates = sorted(self.results_data.keys(), key=lambda d: dt.strptime(d, '%d.%m.%y'))
-        if dates:
-            self.edit_start_date.setText(dates[0])
-            self.edit_end_date.setText(dates[-1])
-        else:
-            self.edit_start_date.setText('')
-            self.edit_end_date.setText('')
-
-    def on_init_dates(self):
         self.get_init_dates()
         self.refresh_all()
 
     def _build_winnings_tab(self) -> QWidget:
-        """Вкладка «Выигрыши» — линейный график (м.) + столбцы (б.)"""
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        self.figure_winnings = plt.Figure(figsize=(12, 6), dpi=100)
-        self.canvas_winnings = FigureCanvas(self.figure_winnings)
-        self.canvas_winnings.mpl_connect('motion_notify_event', self.on_motion_in_winnings)
+        self.canvas_winnings.mpl_connect("motion_notify_event", self.on_motion_in_winnings)
         layout.addWidget(self._wrap_in_frame(self.canvas_winnings), stretch=1)
 
-        self.lbl_hover_winnings = Label('Наведите на график, чтобы увидеть детали')
+        self.lbl_hover_winnings = Label("Наведите на график, чтобы увидеть детали")
         layout.addWidget(self.lbl_hover_winnings)
 
         return tab
 
     def _build_efficiency_tab(self) -> QWidget:
-        """Вкладка «Эффективность» — линейный график (won_m + won_b * 50) / spent"""
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        self.figure_efficiency = plt.Figure(figsize=(12, 6), dpi=100)
-        self.canvas_efficiency = FigureCanvas(self.figure_efficiency)
-        self.canvas_efficiency.mpl_connect('motion_notify_event', self.on_motion_in_efficiency)
+        self.canvas_efficiency.mpl_connect("motion_notify_event", self.on_motion_in_efficiency)
         layout.addWidget(self._wrap_in_frame(self.canvas_efficiency), stretch=1)
 
-        self.lbl_hover_efficiency = Label('Эффективность = (морковки + баллы × 50) / затраты')
+        self.lbl_hover_efficiency = Label("Эффективность = (морковки + баллы × 50) / затраты")
         layout.addWidget(self.lbl_hover_efficiency)
 
         return tab
 
     def _wrap_in_frame(self, canvas: FigureCanvas) -> QFrame:
-        """Оборачивает холст в рамку."""
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame.setStyleSheet("""
-            QFrame {
-                border: 2px solid black;
-                background-color: white;
-            }
-        """)
+        frame.setStyleSheet(self.FRAME_STYLE)
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
         frame_layout.addWidget(canvas)
         return frame
 
-    # --- Данные ---
+    # --- Обработчики ввода дат ---
 
-    def _prepare_data(self) -> Tuple[list, list, list, list]:
-        """Возвращает: dates (datetime), wins_m, wins_b, spent."""
-        dates = sorted(self.results_data.keys(), key=lambda d: dt.strptime(d, '%d.%m.%y'))
-        if self.start_date and self.end_date:
-            dates = list(filter(lambda d: self.start_date <= dt.strptime(d, '%d.%m.%y').date() <= self.end_date, dates))
-        dates_sorted = []
-        wins_m = []
-        wins_b = []
-        spent_list = []
+    def _on_start_date_changed(self):
+        self.start_date = StatisticsData.parse_date(self.edit_start_date.text())
 
-        for date_str in dates:
-            result = self.results_data[date_str]
-            ticket_data = self.ticket_data.get(date_str)
-            if not ticket_data:
-                continue
+    def _on_end_date_changed(self):
+        self.end_date = StatisticsData.parse_date(self.edit_end_date.text())
 
-            win_scheme = self.winning_data.get(ticket_data.win_set)
-            if not win_scheme:
-                continue
+    def get_init_dates(self):
+        if not self.results_data:
+            self.edit_start_date.setText('')
+            self.edit_end_date.setText('')
+            return
 
-            won_m, won_b, spent = result.calculate_winnings_for_tickets(win_scheme, ticket_data)
+        dates = sorted(self.results_data.keys(), key=lambda d: StatisticsData.parse_date(d))
+        self.edit_start_date.setText(dates[0])
+        self.edit_end_date.setText(dates[-1])
 
-            dates_sorted.append(dt.strptime(date_str, '%d.%m.%y'))
-            wins_m.append(won_m)
-            wins_b.append(won_b)
-            spent_list.append(spent)
+    def on_init_dates(self):
+        self.get_init_dates()
+        self.refresh_all()
 
-        return dates_sorted, wins_m, wins_b, spent_list
+    # --- Обработчики движения мыши ---
 
-    def _on_motion_data(self, event, lbl: Label, text: str) -> Optional[Tuple[str, int, int, int]]:
-        if event.inaxes is None:
-            lbl.setText(text)
+    @staticmethod
+    def _find_closest_index(event, xvals: List[float]) -> Optional[int]:
+        if event.inaxes is None or not xvals:
             return None
-
-        # Получаем данные, которые сейчас на графике
-        dates_sorted, wins_m, wins_b, spent = self._prepare_data()
-        if not dates_sorted:
-            return None
-
-        xdata = event.xdata
-        ydata = event.ydata
-
-        # Ищем ближайшую дату (по оси X)
-        # xdata — это float (date2num), сравниваем с date2num от дат
-        xvals = [date2num(d) for d in dates_sorted]
-        best_idx = min(range(len(xvals)), key=lambda i: abs(xvals[i] - xdata))
-        date_str = dates_sorted[best_idx].strftime('%d.%m.%y')
-        return date_str, wins_m[best_idx], wins_b[best_idx], spent[best_idx]
+        return min(range(len(xvals)), key=lambda i: abs(xvals[i] - event.xdata))
 
     def on_motion_in_winnings(self, event):
-        data = self._on_motion_data(event, self.lbl_hover_winnings, 'Наведите на график, чтобы увидеть детали')
-        if data is None:
+        if self.lbl_hover_winnings is None:
             return
-        date_str, m_val, b_val, s = data
+
+        if not self._cached_dates:
+            self.lbl_hover_winnings.setText("Нет данных для отображения")
+            return
+
+        xvals = [date2num(d) for d in self._cached_dates]
+        idx = self._find_closest_index(event, xvals)
+        if idx is None:
+            self.lbl_hover_winnings.setText("Наведите на график, чтобы увидеть детали")
+            return
+
+        date_str = self._cached_dates[idx].strftime(DATE_FORMAT)
+        m_val = self._cached_wins_m[idx]
+        b_val = self._cached_wins_b[idx]
+        s = self._cached_spent[idx]
+
         text = f"Дата: {date_str} | Потрачено: {s} 🥕"
-        text += f" | Морковки: {m_val} 🥕" if m_val else ''
-        text += f" | Баллы: {b_val} 💵" if b_val else ''
+        if m_val:
+            text += f" | Морковки: {m_val} 🥕"
+        if b_val:
+            text += f" | Баллы: {b_val} 💵"
         self.lbl_hover_winnings.setText(text)
 
     def on_motion_in_efficiency(self, event):
-        data = self._on_motion_data(event, self.lbl_hover_efficiency,
-                                    'Эффективность = (морковки + баллы × 50) / затраты')
-        if data is None:
+        if self.lbl_hover_efficiency is None:
             return
-        date_str, m_val, b_val, s = data
 
-        text_m = f"{m_val}🥕" if m_val else ''
-        text_b = f"{b_val}💵 × 50" if b_val else ''
+        if not self._cached_dates:
+            self.lbl_hover_efficiency.setText("Нет данных для отображения")
+            return
+
+        xvals = [date2num(d) for d in self._cached_dates]
+        idx = self._find_closest_index(event, xvals)
+        if idx is None:
+            self.lbl_hover_efficiency.setText("Эффективность = (морковки + баллы × 50) / затраты")
+            return
+
+        date_str = self._cached_dates[idx].strftime(DATE_FORMAT)
+        m_val = self._cached_wins_m[idx]
+        b_val = self._cached_wins_b[idx]
+        s = self._cached_spent[idx]
+
+        eff = (m_val + b_val * 50) / s if s > 0 else 0
+
+        text_m = f"{m_val}🥕" if m_val else ""
+        text_b = f"{b_val}💵 × 50" if b_val else ""
         if not text_m and not text_b:
-            text = '0'
+            text_num = "0"
         else:
-            text = f'({text_m} + {text_b})' if text_m and text_b else text_m or text_b
-        text = f"Дата: {date_str} | Эффективность = {text} / {s}🥕 = {round((m_val + b_val * 50) / s, 2) if s else 0}"
-        self.lbl_hover_efficiency.setText(text)
+            text_num = f"({text_m} + {text_b})" if text_m and text_b else text_m or text_b
 
-    # --- Отрисовка ---
+        self.lbl_hover_efficiency.setText(f"Дата: {date_str} | Эффективность = {text_num} / {s}🥕 = {eff:.2f}")
+
+    # --- Перерисовка графиков ---
 
     def refresh_all(self):
-        """Перерисовывает оба графика."""
         if self.start_date is None or self.end_date is None:
             QMessageBox.warning(self, "Даты не указаны", "Укажите корректные даты!")
             return
         if self.start_date >= self.end_date:
             QMessageBox.warning(self, "Неверные даты", "Начальная дата периода должна быть меньше конечной!")
             return
+
+        # Обновляем кэш один раз
+        (
+            self._cached_dates,
+            self._cached_wins_m,
+            self._cached_wins_b,
+            self._cached_spent,
+        ) = self._stats.prepare(self.start_date, self.end_date)
+
         self._draw_winnings_chart()
         self._draw_efficiency_chart()
 
     def _draw_winnings_chart(self):
-        dates_sorted, wins_m, wins_b, _ = self._prepare_data()
-
         self.figure_winnings.clear()
 
-        if not dates_sorted:
+        if not self._cached_dates:
             self._draw_empty(self.figure_winnings, "Нет данных для отображения")
             self.canvas_winnings.draw()
             return
 
         ax1 = self.figure_winnings.add_subplot(111)
 
-        color_m = '#2e7d32'
-        ax1.plot(dates_sorted, wins_m, color=color_m, marker='o', linewidth=2,
-                 markersize=8, label='Выигрыш (м.)', zorder=3)
-        ax1.fill_between(dates_sorted, wins_m, alpha=0.1, color=color_m, zorder=2)
-        ax1.set_xlabel('Дата розыгрыша', fontsize=12, fontweight='bold')
-        ax1.set_ylabel('Морковки', fontsize=12, color=color_m, fontweight='bold')
-        ax1.tick_params(axis='y', labelcolor=color_m)
+        color_m = "#2e7d32"
+        ax1.plot(
+            self._cached_dates,
+            self._cached_wins_m,
+            color=color_m,
+            marker="o",
+            linewidth=2,
+            markersize=8,
+            label="Морковки",
+            zorder=3,
+        )
+        ax1.fill_between(
+            self._cached_dates,
+            self._cached_wins_m,
+            alpha=0.1,
+            color=color_m,
+            zorder=2,
+        )
+        ax1.set_xlabel("Дата розыгрыша", fontsize=12, fontweight="bold")
+        ax1.set_ylabel("Морковки", fontsize=12, color=color_m, fontweight="bold")
+        ax1.tick_params(axis="y", labelcolor=color_m)
         ax1.set_ylim(bottom=0)
 
         ax2 = ax1.twinx()
-        color_b = '#1565c0'
-        x_pos = date2num(dates_sorted)
-        ax2.bar(x_pos, wins_b, width=0.4, color=color_b, alpha=0.7,
-                label='Выигрыш (б.)', zorder=1, edgecolor=color_b, linewidth=1.5)
-        ax2.set_ylabel('Баллы', fontsize=12, color=color_b, fontweight='bold')
-        ax2.tick_params(axis='y', labelcolor=color_b)
-        ax2.set_ylim(0, max(wins_b) * 1.2 if max(wins_b) > 0 else 100)
+        color_b = "#1565c0"
+        x_pos = [date2num(d) for d in self._cached_dates]
+        ax2.bar(
+            x_pos,
+            self._cached_wins_b,
+            width=0.4,
+            color=color_b,
+            alpha=0.7,
+            label="Баллы",
+            zorder=1,
+            edgecolor=color_b,
+            linewidth=1.5,
+        )
+        ax2.set_ylabel("Баллы", fontsize=12, color=color_b, fontweight="bold")
+        ax2.tick_params(axis="y", labelcolor=color_b)
+        max_b = max(self._cached_wins_b) if self._cached_wins_b else 0
+        ax2.set_ylim(0, max_b * 1.2 if max_b > 0 else 100)
 
-        ax1.xaxis.set_major_formatter(DateFormatter('%d.%m.%y'))
+        ax1.xaxis.set_major_formatter(DateFormatter(DATE_FORMAT))
         for label in ax1.get_xticklabels():
             label.set_rotation(30)
-            # label.set_ha('right')
-        ax1.grid(True, alpha=0.3, linestyle='--')
+        ax1.grid(True, alpha=0.3, linestyle="--")
 
-        # Подписи значений
-        for d, b_val in zip(dates_sorted, wins_b):
+        for d, b_val in zip(self._cached_dates, self._cached_wins_b):
             if b_val > 0:
-                ax2.annotate(str(b_val), (date2num(d), b_val),
-                             textcoords="offset points", xytext=(0, 5),
-                             ha='center', fontsize=9, color=color_b)
+                ax2.annotate(
+                    str(b_val),
+                    (date2num(d), b_val),
+                    textcoords="offset points",
+                    xytext=(0, 5),
+                    ha="center",
+                    fontsize=9,
+                    color=color_b,
+                )
 
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
-        ax1.set_title('Выигрыши по розыгрышам', fontsize=14, fontweight='bold', pad=15)
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=10)
+        ax1.set_title("Выигрыши по розыгрышам", fontsize=14, fontweight="bold", pad=15)
 
         self.figure_winnings.tight_layout()
         self.canvas_winnings.draw()
 
     def _draw_efficiency_chart(self):
-        dates_sorted, wins_m, wins_b, spent_list = self._prepare_data()
-
         self.figure_efficiency.clear()
 
-        if not dates_sorted:
+        if not self._cached_dates:
             self._draw_empty(self.figure_efficiency, "Нет данных для отображения")
             self.canvas_efficiency.draw()
             return
 
-        # Считаем эффективность: (won_m + won_b * 50) / spent
-        efficiency = []
-        for m, b, spent in zip(wins_m, wins_b, spent_list):
-            if spent > 0:
-                eff = (m + b * 50) / spent
-            else:
-                eff = 0
-            efficiency.append(eff)
+        efficiency = [
+            (m + b * 50) / s if s > 0 else 0
+            for m, b, s in zip(self._cached_wins_m, self._cached_wins_b, self._cached_spent)
+        ]
 
         ax = self.figure_efficiency.add_subplot(111)
 
-        color_eff = '#6a1b9a'
-        ax.plot(dates_sorted, efficiency, color=color_eff, marker='s',
-                linewidth=2, markersize=6, label='Эффективность', zorder=3)
-        ax.fill_between(dates_sorted, efficiency, alpha=0.1, color=color_eff, zorder=2)
-        ax.axhline(y=1.0, color='#e53935', linestyle='--', linewidth=1.5, label='Безубыточность (1.0)', zorder=2)
+        color_eff = "#6a1b9a"
+        ax.plot(
+            self._cached_dates,
+            efficiency,
+            color=color_eff,
+            marker="s",
+            linewidth=2,
+            markersize=6,
+            label="Эффективность",
+            zorder=3,
+        )
+        ax.fill_between(
+            self._cached_dates,
+            efficiency,
+            alpha=0.1,
+            color=color_eff,
+            zorder=2,
+        )
+        ax.axhline(
+            y=1.0,
+            color="red",
+            linestyle="--",
+            linewidth=1.5,
+            label="Безубыточность (1.0)",
+            zorder=2,
+        )
 
-        ax.set_xlabel('Дата розыгрыша', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Эффективность', fontsize=12, color=color_eff, fontweight='bold')
-        ax.tick_params(axis='y', labelcolor=color_eff)
+        ax.set_xlabel("Дата розыгрыша", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Эффективность", fontsize=12, color=color_eff, fontweight="bold")
+        ax.tick_params(axis="y", labelcolor=color_eff)
         ax.set_ylim(bottom=0, top=5)
 
-        ax.xaxis.set_major_formatter(DateFormatter('%d.%m.%y'))
+        ax.xaxis.set_major_formatter(DateFormatter(DATE_FORMAT))
         for label in ax.get_xticklabels():
             label.set_rotation(30)
-            # label.set_ha('right')
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.legend(loc='upper left', fontsize=10)
-        ax.set_title('Эффективность выигрышей', fontsize=14, fontweight='bold', pad=15)
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.legend(loc="upper left", fontsize=10)
+        ax.set_title("Эффективность выигрышей", fontsize=14, fontweight="bold", pad=15)
 
         self.figure_efficiency.tight_layout()
         self.canvas_efficiency.draw()
 
-    def _draw_empty(self, figure, text: str):
+    @staticmethod
+    def _draw_empty(figure, text: str):
         ax = figure.add_subplot(111)
-        ax.text(0.5, 0.5, text, transform=ax.transAxes, ha='center', va='center', fontsize=14, color='#888')
-        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            text,
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=24,
+            color="#888",
+        )
+        ax.axis("off")
 
     def open_main_window(self):
         self.window = WelcomeWindow()
