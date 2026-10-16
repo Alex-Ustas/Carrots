@@ -231,8 +231,7 @@ class Result:
             return True
         return False
 
-    def calculate_winnings_for_tickets(self, winning_scheme: 'Winning', tickets_source: TicketSets) \
-            -> Tuple[int, int, int]:
+    def calculate_winnings_for_tickets(self, winning_scheme: 'Winning', tickets: TicketSets) -> Tuple[int, int, int]:
         """
         Рассчитывает суммарный выигрыш (в 'м.' и 'б.') и затраты
         для всех валидных билетов из tickets по текущему результату.
@@ -242,7 +241,7 @@ class Result:
         won_m = 0
         won_b = 0
 
-        for ticket_set in tickets_source.sets:
+        for ticket_set in tickets.sets:
             for ticket in ticket_set:
                 if not ticket.is_valid():
                     continue
@@ -250,12 +249,8 @@ class Result:
                 valid_count += 1
 
                 x = len(set(ticket.first_card_selected) & set(self.first_card_selected))
-                y = (
-                    1
-                    if (ticket.second_card_selected is not None
-                        and ticket.second_card_selected == self.second_card_selected)
-                    else 0
-                )
+                y = 1 if (ticket.second_card_selected is not None
+                          and ticket.second_card_selected == self.second_card_selected) else 0
 
                 prize = winning_scheme.sets.get((x, y))
                 if prize:
@@ -265,7 +260,7 @@ class Result:
                     elif kind == 'б.':
                         won_b += amount
 
-        spent = valid_count * tickets_source.cost
+        spent = valid_count * tickets.cost
         return won_m, won_b, spent
 
 
@@ -1440,13 +1435,10 @@ class ResultWindow(Window):
 
         win_data = self.winning_data[self.win_combo.currentText()]
         ticket_data = self.ticket_data[self.current_date]
-        if self.current_date not in self.results_data:
-            res_data = Result(self.current_date,
-                              self.win_combo.currentText(),
-                              list(self.result_first),
-                              self.result_second)
-        else:
-            res_data = self.results_data[self.current_date]
+        res_data = Result(self.current_date,
+                          self.win_combo.currentText(),
+                          list(self.result_first),
+                          self.result_second)
         won_m, won_b, spent = res_data.calculate_winnings_for_tickets(win_data, ticket_data)
 
         won_text = f'{won_m:,d}🥕, ' if won_m else ''
@@ -1494,11 +1486,10 @@ class ResultWindow(Window):
     def check_changes(self, old_date: str):
         """Проверка на несохраненные изменения"""
         reply = None
-        date = old_date
         win_set = self.win_combo.currentText()
         first_result = sorted(list(self.result_first))
         second_result = self.result_second
-        result = Result(date, win_set, first_result, second_result)
+        result = Result(old_date, win_set, first_result, second_result)
         if old_date and old_date in self.results_data:
             if self.results_data[old_date] != result:
                 reply = QMessageBox.question(self, 'Данные изменены',
@@ -1932,10 +1923,10 @@ class StatisticsData:
     """
 
     def __init__(
-        self,
-        results_data: Dict[str, Result],
-        ticket_data: Dict[str, TicketSets],
-        winning_data: Dict[str, Winning],
+            self,
+            results_data: Dict[str, Result],
+            ticket_data: Dict[str, TicketSets],
+            winning_data: Dict[str, Winning],
     ):
         self.results_data = results_data
         self.ticket_data = ticket_data
@@ -1948,10 +1939,10 @@ class StatisticsData:
         return None
 
     def prepare(
-        self,
-        start_date: Optional[dt.date],
-        end_date: Optional[dt.date],
-    ) -> Tuple[List[dt.date], List[int], List[int], List[float]]:
+            self,
+            start_date: Optional[dt.date],
+            end_date: Optional[dt.date],
+    ) -> Tuple[List[dt.date], List[int], List[int], List[int]]:
         """
         Возвращает:
           - dates_sorted (date)
@@ -1964,20 +1955,21 @@ class StatisticsData:
         filtered: List[str] = []
         for d_str in all_dates:
             d_date = self.parse_date(d_str)
-            if d_date is None:
+            if d_date is None or start_date is None or end_date is None:
                 continue
-            if start_date is not None and d_date < start_date:
-                continue
-            if end_date is not None and d_date > end_date:
-                continue
-            filtered.append(d_str)
+            if start_date <= d_date <= end_date:
+                filtered.append(d_str)
 
         dates_sorted: List[dt.date] = []
         wins_m: List[int] = []
         wins_b: List[int] = []
-        spent_list: List[float] = []
+        spent_list: List[int] = []
 
         for date_str in filtered:
+            d_date = self.parse_date(date_str)
+            if d_date is None:
+                continue
+
             result = self.results_data.get(date_str)
             ticket = self.ticket_data.get(date_str)
             if not result or not ticket:
@@ -1989,9 +1981,6 @@ class StatisticsData:
 
             m_val, b_val, spent = result.calculate_winnings_for_tickets(win_scheme, ticket)
 
-            d_date = self.parse_date(date_str)
-            if d_date is None:
-                continue
             dates_sorted.append(d_date)
             wins_m.append(m_val)
             wins_b.append(b_val)
@@ -2311,6 +2300,7 @@ class StatisticWindow(Window):
             (m + b * 50) / s if s > 0 else 0
             for m, b, s in zip(self._cached_wins_m, self._cached_wins_b, self._cached_spent)
         ]
+        top = min((max([1.5] + efficiency), 5)) * 1.2  # установка верхнего предела от 1.8 до 6
 
         ax = self.figure_efficiency.add_subplot(111)
 
@@ -2344,7 +2334,7 @@ class StatisticWindow(Window):
         ax.set_xlabel("Дата розыгрыша", fontsize=12, fontweight="bold")
         ax.set_ylabel("Эффективность", fontsize=12, color=color_eff, fontweight="bold")
         ax.tick_params(axis="y", labelcolor=color_eff)
-        ax.set_ylim(bottom=0, top=5)
+        ax.set_ylim(bottom=0, top=top)
 
         ax.xaxis.set_major_formatter(DateFormatter(DATE_FORMAT))
         for label in ax.get_xticklabels():

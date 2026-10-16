@@ -502,5 +502,61 @@
       30
     ],
     "second_card_selected": 4
+  },
+  {
+    "date": "05.10.26",
+    "win_set": "05-10-26",
+    "first_card_selected": [
+      7,
+      13,
+      14,
+      16,
+      17,
+      19,
+      20
+    ],
+    "second_card_selected": 41
+  },
+  {
+    "date": "08.10.26",
+    "win_set": "05-10-26",
+    "first_card_selected": [
+      4,
+      7,
+      23,
+      24,
+      26,
+      28,
+      32
+    ],
+    "second_card_selected": 33
+  },
+  {
+    "date": "12.10.26",
+    "win_set": "05-10-26",
+    "first_card_selected": [
+      3,
+      5,
+      9,
+      24,
+      28,
+      30,
+      33
+    ],
+    "second_card_selected": 37
+  },
+  {
+    "date": "15.10.26",
+    "win_set": "05-10-26",
+    "first_card_selected": [
+      1,
+      2,
+      5,
+      10,
+      14,
+      19,
+      29
+    ],
+    "second_card_selected": 49
   }
 ]
