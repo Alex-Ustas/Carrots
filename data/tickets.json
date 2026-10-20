@@ -5698,5 +5698,168 @@
         }
       ]
     ]
+  },
+  {
+    "date": "23.10.26",
+    "cost": 55,
+    "win_set": "05-10-26",
+    "sets": [
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            4,
+            6,
+            10,
+            16,
+            18,
+            32,
+            33
+          ],
+          "second_card_selected": 39
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            2,
+            3,
+            15,
+            21,
+            25,
+            28,
+            34
+          ],
+          "second_card_selected": 16
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            7,
+            11,
+            20,
+            22,
+            24,
+            27,
+            29
+          ],
+          "second_card_selected": 32
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            5,
+            9,
+            13,
+            14,
+            17,
+            26,
+            31
+          ],
+          "second_card_selected": 5
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            0,
+            1,
+            8,
+            12,
+            19,
+            23,
+            30
+          ],
+          "second_card_selected": 45
+        }
+      ],
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            1,
+            2,
+            13,
+            17,
+            18,
+            24,
+            31
+          ],
+          "second_card_selected": 26
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            4,
+            19,
+            20,
+            21,
+            25,
+            26,
+            27
+          ],
+          "second_card_selected": 10
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            7,
+            8,
+            12,
+            16,
+            22,
+            28,
+            30
+          ],
+          "second_card_selected": 27
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            3,
+            6,
+            9,
+            14,
+            23,
+            29,
+            34
+          ],
+          "second_card_selected": 35
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            0,
+            5,
+            10,
+            11,
+            15,
+            32,
+            33
+          ],
+          "second_card_selected": 3
+        }
+      ]
+    ]
+  },
+  {
+    "date": "01.01.27",
+    "cost": 10,
+    "win_set": "28-05-26",
+    "sets": [
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            4,
+            10,
+            16,
+            21,
+            27,
+            31,
+            32
+          ],
+          "second_card_selected": 5
+        }
+      ]
+    ]
   }
 ]

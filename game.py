@@ -1,28 +1,29 @@
 # TODO:
+#   - исправить двойной запрос на сохранения данных при выходе из формы
+#   - StatisticWindow: добавить статистику по выпадению чисел и вероятность их выпадения
 
-import sys, json, random, re
-from pathlib import Path
+from funcs import *
+from models import Ticket, TicketSets, Result, Winning
+from storage import (load_all_tickets, load_all_results, load_all_winnings,
+                     save_all_tickets, save_all_results, save_all_winnings,
+                     TICKETS_FILE, RESULTS_FILE, WINNINGS_FILE)
+from widgets import Label, EditBox, Button, ComboList, EditSpin, Window, CardWidget, TEXT_COLOR
+
+import sys, random, re
 from datetime import datetime as dt
-from typing import List, Optional, Dict, Tuple, TypeVar, Callable
-from dataclasses import dataclass, asdict, field
+from typing import List, Optional, Dict, Tuple
 from copy import deepcopy
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter, date2num
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QGridLayout, QTableWidget,
-                             QWidget, QLabel, QPushButton, QComboBox, QRadioButton, QScrollArea, QSpinBox,
-                             QHeaderView, QTableWidgetItem, QInputDialog, QListWidget, QTabWidget, QLineEdit)
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QTableWidget,
+                             QWidget, QRadioButton, QScrollArea, QHeaderView, QTableWidgetItem, QInputDialog,
+                             QListWidget, QTabWidget)
 from PyQt6.QtGui import QColor, QIcon
-from PyQt6.QtCore import QSize, pyqtSignal, Qt
+from PyQt6.QtCore import Qt
 
-VERSION = '1.15 (2026.10)'
-T = TypeVar("T")
-DATA_DIR = Path("data")
-TICKETS_FILE = DATA_DIR / "tickets.json"
-RESULTS_FILE = DATA_DIR / "results.json"
-WINNINGS_FILE = DATA_DIR / "win_sets.json"
-DATE_FORMAT = "%d.%m.%y"
+VERSION = '2.01 (2026.10)'
 
 CARD1_SIZE = 35
 CARD2_SIZE = 54
@@ -39,362 +40,12 @@ COLORS = [
     QColor("#ffaaaa"),  # 5 — светло-красный
 ]
 RESULT_COLOR = QColor("#FFC000")
-TEXT_COLOR = '#203764'  # тёмно-синий
-
-
-def choose_plural(amount: int, declensions: Tuple[str, str, str]) -> str:
-    """Show the number of subjects in the corresponding declension"""
-    if amount % 10 == 1 and amount % 100 != 11:
-        return f'{amount} {declensions[0]}'
-    elif (amount % 10 == 2 and amount % 100 != 12 or
-          amount % 10 == 3 and amount % 100 != 13 or
-          amount % 10 == 4 and amount % 100 != 14):
-        return f'{amount} {declensions[1]}'
-    else:
-        return f'{amount} {declensions[2]}'
-
-
-def is_valid_date(date_str: str) -> bool:
-    """Проверяет, что строка в формате dd.mm.yy и является реальной датой."""
-    if not date_str:
-        return False
-    try:
-        dt.strptime(date_str, DATE_FORMAT)
-        return True
-    except ValueError:
-        return False
-
-
-def ensure_data_dir():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# Общий шаблон загрузки списка объектов и построения словаря по ключу
-def _load_list_to_dict(
-        path: Path, item_from_dict: Callable[[dict], T], key_extractor: Callable[[dict], str]
-) -> Dict[str, T]:
-    if not path.exists():
-        return {}
-
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except json.JSONDecodeError:
-        return {}
-    except OSError:
-        return {}
-
-    result: Dict[str, T] = {}
-    for item_raw in data:
-        try:
-            key = key_extractor(item_raw)
-            obj = item_from_dict(item_raw)
-            result[key] = obj
-        except (KeyError, TypeError, ValueError):
-            continue
-    return result
-
-
-# Общий шаблон сохранения словаря как списка объектов
-def _save_dict_as_list(path: Path, data: Dict[str, T], item_to_dict: Callable[[T], dict]) -> None:
-    ensure_data_dir()
-    serialized: List[dict] = [item_to_dict(v) for v in data.values()]
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(serialized, f, ensure_ascii=False, indent=2)
-
-
-def load_all_tickets() -> Dict[str, "TicketSets"]:
-    return _load_list_to_dict(TICKETS_FILE, item_from_dict=TicketSets.from_dict, key_extractor=lambda d: d["date"])
-
-
-def load_all_results() -> Dict[str, "Result"]:
-    return _load_list_to_dict(RESULTS_FILE, item_from_dict=Result.from_dict, key_extractor=lambda r: r["date"])
-
-
-def load_all_winnings() -> Dict[str, "Winning"]:
-    return _load_list_to_dict(WINNINGS_FILE, item_from_dict=Winning.from_dict, key_extractor=lambda w: w["name"])
-
-
-def save_all_tickets(data: Dict[str, "TicketSets"]) -> None:
-    _save_dict_as_list(TICKETS_FILE, data, item_to_dict=lambda ts: ts.to_dict())
-
-
-def save_all_results(data: Dict[str, "Result"]) -> None:
-    _save_dict_as_list(RESULTS_FILE, data, item_to_dict=lambda r: r.to_dict())
-
-
-def save_all_winnings(data: Dict[str, "Winning"]) -> None:
-    _save_dict_as_list(WINNINGS_FILE, data, item_to_dict=lambda w: w.to_dict())
-
-
-@dataclass
-class Ticket:
-    ticket: int
-    first_card_selected: List[int]  # индексы 0..34 (всего 35)
-    second_card_selected: Optional[int]  # индекс 0..53 (всего 54)
-
-    def is_valid(self) -> bool:
-        """Валиден, если выбрано ровно 7 ячеек в первой карточке и 1 во второй"""
-        return len(self.first_card_selected) == 7 and self.second_card_selected is not None
-
-
-@dataclass
-class TicketSets:
-    date: str  # dd.mm.yy
-    cost: int
-    win_set: str
-    sets: List[List[Ticket]] = field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "TicketSets":
-        sets = []
-        for s in d.get("sets", []):
-            sets.append([Ticket(**t) for t in s])
-        return cls(date=d["date"], cost=d['cost'], win_set=d['win_set'], sets=sets)
-
-    def to_dict(self) -> dict:
-        sets_serialized = []
-        for s in self.sets:
-            sets_serialized.append([asdict(t) for t in s])
-        return {"date": self.date, 'cost': self.cost, 'win_set': self.win_set, "sets": sets_serialized}
-
-    def get_current_tickets(self, set_index: int) -> List[Ticket]:
-        if 0 <= set_index < len(self.sets):
-            return self.sets[set_index]
-        return []
-
-    def add_empty_set(self):
-        self.sets.append([])
-
-    def remove_set(self, index: int):
-        if 0 <= index < len(self.sets):
-            del self.sets[index]
-
-    @staticmethod
-    def is_set_full(tickets: List[Ticket]) -> bool:
-        """Набор полон, если в нём ровно 5 валидных билетов"""
-        if len(tickets) != 5:
-            return False
-        return all(t.is_valid() for t in tickets)
-
-    def is_valid(self) -> bool:
-        """
-        Валидация по правилам:
-        1. Дата в формате dd.mm.yy.
-        2. Стоимость > 0
-        3. Есть хотя бы один набор.
-        4. Все наборы кроме последнего — полные (5 валидных билетов).
-        5. В последнем наборе есть хотя бы один валидный билет.
-        """
-        if not is_valid_date(self.date):
-            return False
-        if not self.cost:
-            return False
-        if not self.sets:
-            return False
-        for s in self.sets[:-1]:
-            if not self.is_set_full(s):
-                return False
-        if not any(t.is_valid() for t in self.sets[-1]):
-            return False
-
-        return True
-
-
-@dataclass
-class Result:
-    date: str
-    win_set: str
-    first_card_selected: List[int]
-    second_card_selected: Optional[int]
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "Result":
-        return cls(date=d["date"],
-                   win_set=d['win_set'],
-                   first_card_selected=d.get("first_card_selected", []),
-                   second_card_selected=d.get("second_card_selected"))
-
-    def to_dict(self) -> dict:
-        return {
-            "date": self.date,
-            "win_set": self.win_set,
-            "first_card_selected": self.first_card_selected,
-            "second_card_selected": self.second_card_selected
-        }
-
-    def is_valid(self) -> bool:
-        if (is_valid_date(self.date) and
-                self.win_set and
-                self.second_card_selected and
-                len(self.first_card_selected) == 7):
-            return True
-        return False
-
-    def calculate_winnings_for_tickets(self, winning_scheme: 'Winning', tickets: TicketSets) -> Tuple[int, int, int]:
-        """
-        Рассчитывает суммарный выигрыш (в 'м.' и 'б.') и затраты
-        для всех валидных билетов из tickets по текущему результату.
-        Возвращает: (won_m, won_b, spent).
-        """
-        valid_count = 0
-        won_m = 0
-        won_b = 0
-
-        for ticket_set in tickets.sets:
-            for ticket in ticket_set:
-                if not ticket.is_valid():
-                    continue
-
-                valid_count += 1
-
-                x = len(set(ticket.first_card_selected) & set(self.first_card_selected))
-                y = 1 if (ticket.second_card_selected is not None
-                          and ticket.second_card_selected == self.second_card_selected) else 0
-
-                prize = winning_scheme.sets.get((x, y))
-                if prize:
-                    amount, kind = prize
-                    if kind == 'м.':
-                        won_m += amount
-                    elif kind == 'б.':
-                        won_b += amount
-
-        spent = valid_count * tickets.cost
-        return won_m, won_b, spent
-
-
-@dataclass
-class Winning:
-    name: str
-    sets: Dict[Tuple[int, int], list]
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "Winning":
-        raw_sets = d.get("sets", {})
-        parsed_sets = {}
-        for k, v in raw_sets.items():
-            parsed_sets[cls._parse_key(k)] = v
-        return cls(name=d["name"], sets=parsed_sets)
-
-    def to_dict(self) -> dict:
-        raw_sets = {}
-        for k, v in self.sets.items():
-            raw_sets[self._format_key(k)] = v
-        return {"name": self.name, "sets": raw_sets}
-
-    @staticmethod
-    def _parse_key(key: str) -> Tuple[int, int]:
-        parts = key.split("_")
-        return int(parts[0]), int(parts[1])
-
-    @staticmethod
-    def _format_key(key: Tuple[int, int]) -> str:
-        return f"{key[0]}_{key[1]}"
-
-
-class Label(QLabel):
-    def __init__(self, text: str, fixed_width=0, fixed_height=30):
-        super().__init__(text)
-        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px; font-weight: bold')
-        if fixed_width:
-            self.setFixedWidth(fixed_width)
-        if fixed_height:
-            self.setFixedHeight(fixed_height)
-
-
-class EditBox(QLineEdit):
-    def __init__(self, text='', fixed_width=0, fixed_height=30, date_mask=False):
-        super().__init__(text)
-        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px; font-weight: bold')
-        if fixed_width:
-            self.setFixedWidth(fixed_width)
-        if fixed_height:
-            self.setFixedHeight(fixed_height)
-        if date_mask:
-            self.setInputMask('99.99.99;_')
-
-
-class Button(QPushButton):
-    def __init__(self, text: str, fixed_width=0, fixed_height=40, icon_size=16):
-        super().__init__()
-        self.setText(text)
-        self.setStyleSheet(f"""
-            QPushButton {{font-size: 16px; font-weight: bold; color: {TEXT_COLOR}; border: 2px groove #c0c0c0; border-radius: 6px;
-            background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-            stop: 0 #f0f0f0, stop: 1 #d0d0d0)}}
-            QPushButton::disabled {{background-color: #D9D9D9; color: gray; font-weight: bold}}
-            QPushButton::hover {{background-color: {TEXT_COLOR}; color: white; font-weight: bold}}
-            """)
-        self.setIconSize(QSize(icon_size, icon_size))
-        if fixed_width:
-            self.setFixedWidth(fixed_width)
-        if fixed_height:
-            self.setFixedHeight(fixed_height)
-
-
-class CardButton(QPushButton):
-    def __init__(self, text: str):
-        super().__init__()
-        self.setText(text)
-        self.setStyleSheet(f"""
-            font-size: 14px; font-weight: bold; color: {TEXT_COLOR}; border: 1px solid black; border-radius: 6px;
-            background-color: white;
-            """)
-        self.setFixedSize(40, 40)
-
-
-class ComboList(QComboBox):
-    def __init__(self, fixed_width=0, fixed_height=30, editable=False, date_mask=False):
-        super().__init__()
-        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px')
-        self.setMaxVisibleItems(10)
-        self.setEditable(editable)
-        if fixed_width:
-            self.setFixedWidth(fixed_width)
-        if fixed_height:
-            self.setFixedHeight(fixed_height)
-        if date_mask:
-            self.lineEdit().setInputMask('99.99.99;_')
-
-
-class EditSpin(QSpinBox):
-    def __init__(self, fixed_width=0, fixed_height=30, maximum=1000, step=5):
-        super().__init__()
-        self.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 16px; font-weight: bold')
-        if fixed_width:
-            self.setFixedWidth(fixed_width)
-        if fixed_height:
-            self.setFixedHeight(fixed_height)
-        if maximum:
-            self.setMaximum(maximum)
-        if step:
-            self.setSingleStep(step)
-
-
-class Window(QWidget):
-    def __init__(self, text: str, width=300, height=300):
-        super().__init__()
-        self.setMinimumSize(width, height)
-        self.setWindowTitle(text)
-        self.setWindowIcon(QIcon('images/carrots.png'))
-
-    def delete_widgets(self, layout):
-        while layout.count() > 0:
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-            child_layout = item.layout()
-            if child_layout is not None:
-                self.delete_widgets(child_layout)
-                child_layout.deleteLater()
 
 
 class WelcomeWindow(Window):
     def __init__(self):
         super().__init__('Carrots', height=270)
+        self.window: Optional[WelcomeWindow] = None
         self._init_ui()
 
     def _init_ui(self):
@@ -423,7 +74,7 @@ class WelcomeWindow(Window):
         self.close()
 
     def open_results_window(self):
-        self.window = ResultWindow('')
+        self.window = ResultWindow()
         self.window.show()
         self.close()
 
@@ -442,66 +93,13 @@ class WelcomeWindow(Window):
                 1088]
         fio = ''.join([chr(c) for c in name])
         html_text = f"""
-        <h3><p><b>Автор:</b> {fio}</p></h3>
+        <h2><p>Автор: {fio}</p></h2>
+        <p>Реализация игры в <b>Морковск!</b> (Ozon)</p>
         <p><b>Telegram:</b> @AlexUstas0</p>
         <p><b>email:</b> alex.ustas@internet.ru</p>
         <p><b>Версия:</b> {VERSION}</p>
         """
         QMessageBox.information(self, 'О программе', html_text)
-
-
-class CardWidget(QFrame):
-    cell_clicked = pyqtSignal(int)
-
-    def __init__(self, rows: int, cols: int, active: int):
-        super().__init__()
-        self.active = active
-        self.total = rows * cols
-        self.setStyleSheet("background-color: white; border: 1px solid black;")
-
-        self._bg_colors: List[Optional[QColor]] = [None] * self.total
-        self._borders: List[Optional[str]] = [None] * self.total
-
-        layout = QGridLayout()
-        layout.setSpacing(2)
-        layout.setContentsMargins(10, 10, 10, 10)
-        self.setLayout(layout)
-
-        self.buttons: List[CardButton] = []
-        for i in range(self.total):
-            btn = CardButton(str(i + 1))
-            btn.clicked.connect(lambda _, idx=i: self.cell_clicked.emit(idx))  # type: ignore
-            self.buttons.append(btn)
-            r, c = divmod(i, cols)
-            layout.addWidget(btn, r, c)
-            if i >= active:
-                btn.setVisible(False)
-
-    def _build_style(self, idx: int) -> str:
-        bg = self._bg_colors[idx]
-        border = self._borders[idx]
-        bg_str = bg.name() if bg else "white"
-        border_str = f"4px solid {border}" if border else "1px solid black"
-        return (f"font-size: 14px; font-weight: bold; color: {TEXT_COLOR}; "
-                f"border: {border_str}; border-radius: 6px; "
-                f"background-color: {bg_str};")
-
-    def set_cell_color(self, idx: int, color: Optional[QColor]):
-        if idx < 0 or idx >= self.active:
-            return
-        self._bg_colors[idx] = color
-        self.buttons[idx].setStyleSheet(self._build_style(idx))
-
-    def set_cell_border(self, idx: int, border_color: Optional[str]):
-        if idx < 0 or idx >= self.active:
-            return
-        self._borders[idx] = border_color
-        self.buttons[idx].setStyleSheet(self._build_style(idx))
-
-    def clear_all_borders(self):
-        for i in range(self.active):
-            self._borders[i] = None
-            self.buttons[i].setStyleSheet(self._build_style(i))
 
 
 class TicketWindow(Window):
@@ -521,6 +119,8 @@ class TicketWindow(Window):
         # Рабочее состояние: 0 = пусто, 1..5 = цвет (номер билета)
         self.first_card: List[int] = [0] * CARD1_SIZE
         self.second_card: List[int] = [0] * CARD2_SIZE
+
+        self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
         self._refresh_dates()
@@ -784,21 +384,27 @@ class TicketWindow(Window):
                                                               cost=self.cost_spin.value())
 
         # Проверка, что последний набор полностью заполнен
-        data = self.tickets_data[self.current_date].sets[-1]
-        sets = len(self.tickets_data[self.current_date].sets)
-        tickets = sum([1 for t in data if t.is_valid()])
+        sets = self.tickets_data[self.current_date].sets
+        tickets = 0
+        n_sets = 1
+        if sets:
+            data = sets[-1]
+            n_sets = len(sets)
+            tickets = sum([1 for t in data if t.is_valid()])
         if tickets < 5:
+            if not sets:
+                del self.tickets_data[self.current_date]
             tickets = choose_plural(tickets, ('билет', 'билета', 'билетов'))
             QMessageBox.warning(self, "Ошибка",
                                 "Сначала заполните полностью все 5 билетов в последнем наборе!"
-                                f"\nСейчас в наборе {sets} полностью заполнено всего {tickets}.")
+                                f"\nСейчас в наборе {n_sets} полностью заполнено всего {tickets}.")
             return
 
         self.tickets_data[self.current_date].add_empty_set()
 
         # Перезагружаем контекст, чтобы обновить комбо и выбрать новый набор
         self._load_current_context()
-        last_idx = len(self.tickets_data[self.current_date].sets) - 1
+        last_idx = len(sets) - 1
         self.combo_set.setCurrentIndex(last_idx)
         self.current_set_index = last_idx
         self._update_total_cost_text()
@@ -1141,7 +747,7 @@ class TicketWindow(Window):
 
 
 class ResultWindow(Window):
-    def __init__(self, date: str = ''):
+    def __init__(self):
         super().__init__('Результаты', width=800, height=600)
         self.results_data: Dict[str, Result] = load_all_results()
         self.ticket_data: Dict[str, TicketSets] = load_all_tickets()
@@ -1152,9 +758,9 @@ class ResultWindow(Window):
         self.result_first: set = set()
         self.result_second: Optional[int] = None
 
+        self.window: Optional[WelcomeWindow] = None
+
         self._init_ui()
-        if date:
-            self.date_combo.setCurrentText(date)
 
     def _init_ui(self):
         main_layout = QHBoxLayout()
@@ -1521,6 +1127,8 @@ class WinningWindow(Window):
         self.results_data: Dict[str, Result] = load_all_results()
         self.original_data = None
         self.trigger_to_save = False  # при любом изменении становится True
+
+        self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
 
@@ -1992,7 +1600,7 @@ class StatisticsData:
 class StatisticWindow(Window):
     FRAME_STYLE = "QFrame {border: 2px solid black; background-color: white;}"
 
-    def __init__(self, date: str = ""):
+    def __init__(self):
         super().__init__("Статистика", width=900, height=650)
 
         self.results_data: Dict[str, Result] = load_all_results()
@@ -2016,10 +1624,7 @@ class StatisticWindow(Window):
         self.figure_efficiency = plt.Figure(figsize=(12, 6), dpi=100)
         self.canvas_efficiency = FigureCanvas(self.figure_efficiency)
 
-        self.lbl_hover_winnings: Optional[Label] = None
-        self.lbl_hover_efficiency: Optional[Label] = None
-        self.edit_start_date: Optional[EditBox] = None
-        self.edit_end_date: Optional[EditBox] = None
+        self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
 

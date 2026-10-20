@@ -4,14 +4,16 @@
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
 # User-specific files
-*.xlsx
 temp*.py
 *test*.py
+*.exe
+*.spec
 backup/*.*
 
 # Python build & dist files
 build/
 dist/
+output/
 .idea/*.*
 
 # User-specific files (MonoDevelop/Xamarin Studio)
