@@ -1,6 +1,4 @@
 # TODO:
-#   - исправить двойной запрос на сохранения данных при выходе из формы
-#   - StatisticWindow: добавить статистику по выпадению чисел и вероятность их выпадения
 
 from funcs import *
 from models import Ticket, TicketSets, Result, Winning
@@ -9,9 +7,10 @@ from storage import (load_all_tickets, load_all_results, load_all_winnings,
                      TICKETS_FILE, RESULTS_FILE, WINNINGS_FILE)
 from widgets import Label, EditBox, Button, ComboList, EditSpin, Window, CardWidget, TEXT_COLOR
 
-import sys, random, re
+import sys, random, re, math
 from datetime import datetime as dt
 from typing import List, Optional, Dict, Tuple
+from collections import Counter
 from copy import deepcopy
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter, date2num
@@ -23,7 +22,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import Qt
 
-VERSION = '2.01 (2026.10)'
+VERSION = '2.02 (2026.10)'
 
 CARD1_SIZE = 35
 CARD2_SIZE = 54
@@ -120,6 +119,7 @@ class TicketWindow(Window):
         self.first_card: List[int] = [0] * CARD1_SIZE
         self.second_card: List[int] = [0] * CARD2_SIZE
 
+        self.check_on_close: bool = True  # исключение повторной проверки при закрытии окна
         self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
@@ -736,11 +736,13 @@ class TicketWindow(Window):
                 self.on_save(old_date)
 
     def closeEvent(self, event):
-        self.check_changes(self.current_date)
+        if self.check_on_close:
+            self.check_changes(self.current_date)
         event.accept()
 
     def open_main_window(self):
         self.check_changes(self.current_date)
+        self.check_on_close = False
         self.window = WelcomeWindow()
         self.window.show()
         self.close()
@@ -758,6 +760,7 @@ class ResultWindow(Window):
         self.result_first: set = set()
         self.result_second: Optional[int] = None
 
+        self.check_on_close: bool = True  # исключение повторной проверки при закрытии окна
         self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
@@ -1109,11 +1112,13 @@ class ResultWindow(Window):
             self.on_save(old_date)
 
     def closeEvent(self, event):
-        self.check_changes(self.current_date)
+        if self.check_on_close:
+            self.check_changes(self.current_date)
         event.accept()
 
     def open_main_window(self):
         self.check_changes(self.current_date)
+        self.check_on_close = False
         self.window = WelcomeWindow()
         self.window.show()
         self.close()
@@ -1496,7 +1501,7 @@ class WinningWindow(Window):
         self.trigger_to_save = False
 
     def closeEvent(self, event):
-        if not getattr(self, 'trigger_to_save', True):
+        if not self.trigger_to_save:
             event.accept()
             return
         reply = QMessageBox.question(self, 'Данные изменены',
@@ -1519,6 +1524,7 @@ class WinningWindow(Window):
             if reply == QMessageBox.StandardButton.Yes:
                 self.on_save_winning()
 
+        self.trigger_to_save = False
         self.window = WelcomeWindow()
         self.window.show()
         self.close()
@@ -1546,6 +1552,9 @@ class StatisticsData:
             return dt.strptime(date_str, DATE_FORMAT).date()
         return None
 
+    def sorted_dates(self, data: Dict[str, object]) -> List[str]:
+        return sorted(data.keys(), key=lambda d: self.parse_date(d))
+
     def prepare(
             self,
             start_date: Optional[dt.date],
@@ -1558,14 +1567,15 @@ class StatisticsData:
           - wins_b (баллы)
           - spent (затраты)
         """
-        all_dates = sorted(self.results_data.keys(), key=lambda d: self.parse_date(d))
+        if start_date is None or end_date is None:
+            return [], [], [], []
+
+        all_dates = self.sorted_dates(self.results_data)
 
         filtered: List[str] = []
         for d_str in all_dates:
             d_date = self.parse_date(d_str)
-            if d_date is None or start_date is None or end_date is None:
-                continue
-            if start_date <= d_date <= end_date:
+            if d_date is not None and start_date <= d_date <= end_date:
                 filtered.append(d_str)
 
         dates_sorted: List[dt.date] = []
@@ -1575,16 +1585,11 @@ class StatisticsData:
 
         for date_str in filtered:
             d_date = self.parse_date(date_str)
-            if d_date is None:
-                continue
 
             result = self.results_data.get(date_str)
             ticket = self.ticket_data.get(date_str)
-            if not result or not ticket:
-                continue
-
-            win_scheme = self.winning_data.get(ticket.win_set)
-            if not win_scheme:
+            win_scheme = self.winning_data.get(ticket.win_set) if ticket else None
+            if not result or not ticket or not win_scheme:
                 continue
 
             m_val, b_val, spent = result.calculate_winnings_for_tickets(win_scheme, ticket)
@@ -1595,6 +1600,94 @@ class StatisticsData:
             spent_list.append(spent)
 
         return dates_sorted, wins_m, wins_b, spent_list
+
+    def prepare_numbers_frequency(
+            self,
+            start_date: Optional[dt.date],
+            end_date: Optional[dt.date],
+    ) -> Tuple[List[int], List[int]]:
+        """
+        Возвращает два списка:
+          - freq_card1: частота для чисел 0..34
+          - freq_card2: частота для чисел 0..53
+        По всем выигрышам в периоде [start_date, end_date].
+        """
+        if start_date is None or end_date is None:
+            return [0] * 35, [0] * 54
+
+        freq_card1 = Counter()
+        freq_card2 = Counter()
+
+        all_dates = self.sorted_dates(self.results_data)
+
+        for d_str in all_dates:
+            d_date = self.parse_date(d_str)
+            if d_date is None:
+                continue
+
+            if start_date <= d_date <= end_date:
+                result = self.results_data.get(d_str)
+                if result:
+                    for n in result.first_card_selected:
+                        freq_card1[n] += 1
+                    freq_card2[result.second_card_selected] += 1
+
+        list_first_card = [freq_card1.get(n, 0) for n in range(35)]
+        list_second_card = [freq_card2.get(n, 0) for n in range(54)]
+        return list_first_card, list_second_card
+
+    def prepare_probabilities(
+            self,
+            start_date: Optional[dt.date],
+            end_date: Optional[dt.date],
+            decay_lambda: float = 0.07
+    ) -> Tuple[List[float], List[float]]:
+        """
+        Возвращает прогнозные вероятности в процентах для чисел:
+          - prob_card1: вероятности для чисел 0..34
+          - prob_card2: вероятности для чисел 0..53
+        Логика: чем ближе розыгрыш к end_date, тем меньший вес он имеет.
+
+        Параметры:
+          decay_lambda — скорость затухания.
+        Рекомендуемые значения: 0.03–0.15.
+        """
+        if start_date is None or end_date is None:
+            return [0.0] * 35, [0.0] * 54
+
+        count_card1 = Counter()
+        count_card2 = Counter()
+        total_weight = 0.0
+
+        all_dates = self.sorted_dates(self.results_data)
+        end_ordinal = end_date.toordinal()
+
+        for d_str in all_dates:
+            d_date = self.parse_date(d_str)
+            if d_date is None:
+                continue
+
+            if start_date <= d_date <= end_date:
+                result = self.results_data.get(d_str)
+                if result:
+                    days_ago = end_ordinal - d_date.toordinal()
+                    weight = math.exp(-decay_lambda * days_ago)
+                    total_weight += weight
+
+                    for n1 in result.first_card_selected:
+                        if 0 <= n1 <= 34:
+                            count_card1[n1] += weight
+
+                    n2 = result.second_card_selected
+                    if 0 <= n2 <= 53:
+                        count_card2[n2] += weight
+
+        if total_weight == 0:
+            return [0.0] * 35, [0.0] * 54
+
+        list_first_card = [(1 - count_card1.get(n, 0) / total_weight) * 100 for n in range(35)]
+        list_second_card = [(1 - count_card2.get(n, 0) / total_weight) * 100 for n in range(54)]
+        return list_first_card, list_second_card
 
 
 class StatisticWindow(Window):
@@ -1624,6 +1717,18 @@ class StatisticWindow(Window):
         self.figure_efficiency = plt.Figure(figsize=(12, 6), dpi=100)
         self.canvas_efficiency = FigureCanvas(self.figure_efficiency)
 
+        self.figure_frequency_card1 = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_frequency_card1 = FigureCanvas(self.figure_frequency_card1)
+
+        self.figure_frequency_card2 = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_frequency_card2 = FigureCanvas(self.figure_frequency_card2)
+
+        self.figure_prob_card1 = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_prob_card1 = FigureCanvas(self.figure_prob_card1)
+
+        self.figure_prob_card2 = plt.Figure(figsize=(12, 6), dpi=100)
+        self.canvas_prob_card2 = FigureCanvas(self.figure_prob_card2)
+
         self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
@@ -1637,6 +1742,8 @@ class StatisticWindow(Window):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_winnings_tab(), "Выигрыши")
         self.tabs.addTab(self._build_efficiency_tab(), "Эффективность")
+        self.tabs.addTab(self._build_frequency_tab(), "Частота выпадения чисел")
+        self.tabs.addTab(self._build_prob_tab(), "Вероятность выпадения чисел")
         self.tabs.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 14px; font-weight: bold")
         main_layout.addWidget(self.tabs, stretch=1)
 
@@ -1697,6 +1804,40 @@ class StatisticWindow(Window):
 
         self.lbl_hover_efficiency = Label("Эффективность = (морковки + баллы × 50) / затраты")
         layout.addWidget(self.lbl_hover_efficiency)
+
+        return tab
+
+    def _build_frequency_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Верхняя часть: график 1–35
+        top_frame = self._wrap_in_frame(self.canvas_frequency_card1)
+        top_container = QVBoxLayout()
+        top_container.addWidget(top_frame, stretch=1)
+        layout.addLayout(top_container, stretch=1)
+
+        # Разделитель
+        layout.addSpacing(12)
+
+        # Нижняя часть: график 1–54
+        bottom_frame = self._wrap_in_frame(self.canvas_frequency_card2)
+        bottom_container = QVBoxLayout()
+        bottom_container.addWidget(bottom_frame, stretch=1)
+        layout.addLayout(bottom_container, stretch=1)
+
+        return tab
+
+    def _build_prob_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        top_frame = self._wrap_in_frame(self.canvas_prob_card1)
+        bottom_frame = self._wrap_in_frame(self.canvas_prob_card2)
+
+        layout.addWidget(top_frame)
+        layout.addSpacing(12)
+        layout.addWidget(bottom_frame)
 
         return tab
 
@@ -1783,8 +1924,12 @@ class StatisticWindow(Window):
         m_val = self._cached_wins_m[idx]
         b_val = self._cached_wins_b[idx]
         s = self._cached_spent[idx]
+        total_m = sum(self._cached_wins_m)
+        total_b = sum(self._cached_wins_b) * 50
+        total_s = sum(self._cached_spent)
 
         eff = (m_val + b_val * 50) / s if s > 0 else 0
+        total_eff = (total_m + total_b) / total_s if total_s > 0 else 0
 
         text_m = f"{m_val}🥕" if m_val else ""
         text_b = f"{b_val}💵 × 50" if b_val else ""
@@ -1792,8 +1937,10 @@ class StatisticWindow(Window):
             text_num = "0"
         else:
             text_num = f"({text_m} + {text_b})" if text_m and text_b else text_m or text_b
+        total_text = f' | Общая эффективность = {total_m + total_b} / {total_s} = {total_eff:.2f}'
 
-        self.lbl_hover_efficiency.setText(f"Дата: {date_str} | Эффективность = {text_num} / {s}🥕 = {eff:.2f}")
+        self.lbl_hover_efficiency.setText(
+            f"Дата: {date_str} | Эффективность = {text_num} / {s}🥕 = {eff:.2f}{total_text}")
 
     # --- Перерисовка графиков ---
 
@@ -1815,6 +1962,8 @@ class StatisticWindow(Window):
 
         self._draw_winnings_chart()
         self._draw_efficiency_chart()
+        self._draw_frequency_charts()
+        self._draw_prob_charts()
 
     def _draw_winnings_chart(self):
         self.figure_winnings.clear()
@@ -1847,7 +1996,7 @@ class StatisticWindow(Window):
         ax1.set_xlabel("Дата розыгрыша", fontsize=12, fontweight="bold")
         ax1.set_ylabel("Морковки", fontsize=12, color=color_m, fontweight="bold")
         ax1.tick_params(axis="y", labelcolor=color_m)
-        ax1.set_ylim(bottom=0)
+        ax1.set_ylim(0)
 
         ax2 = ax1.twinx()
         color_b = "#1565c0"
@@ -1865,7 +2014,7 @@ class StatisticWindow(Window):
         )
         ax2.set_ylabel("Баллы", fontsize=12, color=color_b, fontweight="bold")
         ax2.tick_params(axis="y", labelcolor=color_b)
-        max_b = max(self._cached_wins_b) if self._cached_wins_b else 0
+        max_b = max(self._cached_wins_b, default=0)
         ax2.set_ylim(0, max_b * 1.2 if max_b > 0 else 100)
 
         ax1.xaxis.set_major_formatter(DateFormatter(DATE_FORMAT))
@@ -1939,7 +2088,7 @@ class StatisticWindow(Window):
         ax.set_xlabel("Дата розыгрыша", fontsize=12, fontweight="bold")
         ax.set_ylabel("Эффективность", fontsize=12, color=color_eff, fontweight="bold")
         ax.tick_params(axis="y", labelcolor=color_eff)
-        ax.set_ylim(bottom=0, top=top)
+        ax.set_ylim(0, top)
 
         ax.xaxis.set_major_formatter(DateFormatter(DATE_FORMAT))
         for label in ax.get_xticklabels():
@@ -1950,6 +2099,147 @@ class StatisticWindow(Window):
 
         self.figure_efficiency.tight_layout()
         self.canvas_efficiency.draw()
+
+    def _draw_frequency_charts(self):
+        self.figure_frequency_card1.clear()
+        self.figure_frequency_card2.clear()
+
+        if not self._cached_dates:
+            self._draw_empty(self.figure_frequency_card1, "Нет данных для отображения")
+            self._draw_empty(self.figure_frequency_card2, "Нет данных для отображения")
+            self.canvas_frequency_card1.draw()
+            self.canvas_frequency_card2.draw()
+            return
+
+        freq_first_card, freq_second_card = self._stats.prepare_numbers_frequency(self.start_date, self.end_date)
+
+        # График 1: 1–35
+        ax1 = self.figure_frequency_card1.add_subplot(111)
+        x1 = list(range(1, 36))
+        color1 = "#2e7d32"
+        ax1.bar(x1, freq_first_card, color=color1, edgecolor=color1, linewidth=0.8)
+        ax1.set_xlabel("Число", fontsize=12, fontweight="bold")
+        ax1.set_ylabel("Количество выпадений", fontsize=12, fontweight="bold")
+        ax1.set_xticks(x1)
+        ax1.set_xticklabels([str(n) for n in x1], fontsize=8, rotation=90)
+        ax1.set_title("Частота выпадения чисел в первой карточке", fontsize=14, fontweight="bold", pad=15)
+        ax1.grid(True, axis="y", alpha=0.3, linestyle="--")
+
+        max_freq = max(freq_first_card, default=0)
+        for n, freq in enumerate(freq_first_card, start=1):
+            if freq > 0:
+                if freq > max_freq / 3 and max_freq > 0:
+                    y_pos = max_freq * 0.1
+                    color = 'white'
+                else:
+                    y_pos = freq
+                    color = color1
+                ax1.annotate(str(freq), (n, y_pos), textcoords="offset points", va='bottom',
+                             xytext=(0, 5), ha="center", fontsize=10, color=color)
+
+        self.figure_frequency_card1.tight_layout()
+        self.canvas_frequency_card1.draw()
+
+        # График 2: 1–54
+        ax2 = self.figure_frequency_card2.add_subplot(111)
+        x2 = list(range(1, 55))
+        color2 = "#1565c0"
+        ax2.bar(x2, freq_second_card, color=color2, edgecolor=color2, linewidth=0.8)
+        ax2.set_xlabel("Число", fontsize=12, fontweight="bold")
+        ax2.set_ylabel("Количество выпадений", fontsize=12, fontweight="bold")
+        ax2.set_xticks(x2)
+        ax2.set_xticklabels([str(n) for n in x2], fontsize=7, rotation=90)
+        ax2.set_title("Частота выпадения чисел во второй карточке", fontsize=14, fontweight="bold", pad=15)
+        ax2.grid(True, axis="y", alpha=0.3, linestyle="--")
+
+        max_freq = max(freq_second_card, default=0)
+        for n, freq in enumerate(freq_second_card, start=1):
+            if freq > 0:
+                y_pos = max_freq * 0.1
+                ax2.annotate(str(freq), (n, y_pos), textcoords="offset points", va='bottom',
+                             xytext=(0, 5), ha="center", fontsize=10, color='white')
+
+        self.figure_frequency_card2.tight_layout()
+        self.canvas_frequency_card2.draw()
+
+    def _draw_prob_charts(self):
+        self.figure_prob_card1.clear()
+        self.figure_prob_card2.clear()
+
+        if not self._cached_dates:
+            self._draw_empty(self.figure_prob_card1, "Нет данных для отображения")
+            self._draw_empty(self.figure_prob_card2, "Нет данных для отображения")
+            self.canvas_prob_card1.draw()
+            self.canvas_prob_card2.draw()
+            return
+
+        prob_first_card, prob_second_card = self._stats.prepare_probabilities(self.start_date, self.end_date)
+
+        # График 1: 1–35
+        ax1 = self.figure_prob_card1.add_subplot(111)
+
+        prob1 = sorted(enumerate(prob_first_card, start=1), key=lambda p: p[1], reverse=True)
+        x_pos = list(range(1, len(prob1) + 1))
+        heights = [p[1] for p in prob1]  # высоты столбцов (вероятности)
+        labels = [str(p[0]) for p in prob1]  # подписи: реальные номера чисел
+        color1 = "#2e7d32"
+
+        ax1.bar(x_pos, heights, color=color1, edgecolor=color1, linewidth=0.8)
+        ax1.set_xlabel("Числа", fontsize=12, fontweight="bold")
+        ax1.set_ylabel("Прогнозная вероятность (%)", fontsize=12, fontweight="bold")
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels(labels, fontsize=8, rotation=90)
+        ax1.set_title("Вероятность выпадения чисел в первой карточке, отсортировано по убыванию",
+                      fontsize=14, fontweight="bold", pad=15)
+        ax1.grid(True, axis="y", alpha=0.3, linestyle="--")
+
+        max_prob1 = max(heights, default=0)
+        for n, prob in enumerate(heights, start=1):
+            if prob > 0:
+                if prob > max_prob1 / 3 and max_prob1 > 0:
+                    y_pos = max_prob1 * 0.1
+                    color = 'white'
+                else:
+                    y_pos = prob
+                    color = color1
+                ax1.annotate(f'{prob:.2f}%', (n, y_pos), va='bottom', textcoords="offset points",
+                             xytext=(0, 5), ha="center", fontsize=9, rotation=90, color=color)
+
+        self.figure_prob_card1.tight_layout()
+        self.canvas_prob_card1.draw()
+
+        # График 2: 1–54
+        ax2 = self.figure_prob_card2.add_subplot(111)
+
+        prob2 = sorted(enumerate(prob_second_card, start=1), key=lambda p: p[1], reverse=True)
+        x_pos = list(range(1, len(prob2) + 1))
+        heights = [p[1] for p in prob2]  # высоты столбцов (вероятности)
+        labels = [str(p[0]) for p in prob2]  # подписи: реальные номера чисел
+        color2 = "#1565c0"
+
+        ax2.bar(x_pos, heights, color=color2, edgecolor=color2, linewidth=0.8)
+        ax2.set_xlabel("Числа", fontsize=12, fontweight="bold")
+        ax2.set_ylabel("Прогнозная вероятность (%)", fontsize=12, fontweight="bold")
+        ax2.set_xticks(x_pos)
+        ax2.set_xticklabels(labels, fontsize=7, rotation=90)
+        ax2.set_title("Вероятность выпадения чисел во второй карточке, отсортировано по убыванию",
+                      fontsize=14, fontweight="bold", pad=15)
+        ax2.grid(True, axis="y", alpha=0.3, linestyle="--")
+
+        max_prob2 = max(heights, default=0)
+        for n, prob in enumerate(heights, start=1):
+            if prob > 0:
+                if prob > max_prob2 / 3 and max_prob2 > 0:
+                    y_pos = max_prob2 * 0.1
+                    color = 'white'
+                else:
+                    y_pos = prob
+                    color = color2
+                ax2.annotate(f'{prob:.2f}%', (n, y_pos), va='bottom', textcoords="offset points",
+                             xytext=(0, 5), ha="center", fontsize=8, rotation=90, color=color)
+
+        self.figure_prob_card2.tight_layout()
+        self.canvas_prob_card2.draw()
 
     @staticmethod
     def _draw_empty(figure, text: str):
