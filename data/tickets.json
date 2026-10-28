@@ -5841,23 +5841,417 @@
     ]
   },
   {
-    "date": "01.01.27",
-    "cost": 10,
-    "win_set": "28-05-26",
+    "date": "26.10.26",
+    "cost": 55,
+    "win_set": "05-10-26",
     "sets": [
       [
         {
           "ticket": 1,
           "first_card_selected": [
             4,
+            7,
+            11,
+            16,
+            22,
+            29,
+            30
+          ],
+          "second_card_selected": 5
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            3,
+            14,
+            21,
+            23,
+            24,
+            32,
+            34
+          ],
+          "second_card_selected": 45
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            5,
+            10,
+            15,
+            17,
+            20,
+            26,
+            33
+          ],
+          "second_card_selected": 3
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            0,
+            2,
+            6,
+            12,
+            18,
+            27,
+            31
+          ],
+          "second_card_selected": 26
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            1,
+            8,
+            9,
+            13,
+            19,
+            25,
+            28
+          ],
+          "second_card_selected": 36
+        }
+      ],
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            8,
             10,
             16,
-            21,
-            27,
+            18,
+            29,
+            30,
+            33
+          ],
+          "second_card_selected": 10
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            1,
+            4,
+            15,
+            20,
+            23,
+            25,
+            27
+          ],
+          "second_card_selected": 40
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            3,
+            5,
+            6,
+            12,
+            14,
             31,
             32
           ],
+          "second_card_selected": 18
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            0,
+            7,
+            9,
+            11,
+            19,
+            21,
+            28
+          ],
+          "second_card_selected": 11
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            2,
+            13,
+            17,
+            22,
+            24,
+            26,
+            34
+          ],
+          "second_card_selected": 38
+        }
+      ]
+    ]
+  },
+  {
+    "date": "29.10.26",
+    "cost": 55,
+    "win_set": "05-10-26",
+    "sets": [
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            2,
+            3,
+            10,
+            14,
+            19,
+            28,
+            33
+          ],
+          "second_card_selected": 42
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            0,
+            5,
+            7,
+            9,
+            25,
+            26,
+            29
+          ],
+          "second_card_selected": 23
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            4,
+            11,
+            15,
+            22,
+            23,
+            30,
+            32
+          ],
+          "second_card_selected": 15
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            1,
+            6,
+            16,
+            20,
+            24,
+            27,
+            31
+          ],
+          "second_card_selected": 35
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            8,
+            12,
+            13,
+            17,
+            18,
+            21,
+            34
+          ],
+          "second_card_selected": 18
+        }
+      ],
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            2,
+            3,
+            5,
+            8,
+            9,
+            29,
+            33
+          ],
+          "second_card_selected": 26
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            10,
+            15,
+            16,
+            18,
+            21,
+            23,
+            34
+          ],
+          "second_card_selected": 50
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            1,
+            4,
+            11,
+            13,
+            17,
+            26,
+            27
+          ],
+          "second_card_selected": 10
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            12,
+            19,
+            20,
+            25,
+            28,
+            30,
+            31
+          ],
+          "second_card_selected": 36
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            0,
+            6,
+            7,
+            14,
+            22,
+            24,
+            32
+          ],
           "second_card_selected": 5
+        }
+      ],
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            3,
+            16,
+            18,
+            24,
+            25,
+            26,
+            31
+          ],
+          "second_card_selected": 8
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            1,
+            5,
+            8,
+            9,
+            20,
+            30,
+            34
+          ],
+          "second_card_selected": 27
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            0,
+            10,
+            11,
+            14,
+            17,
+            21,
+            33
+          ],
+          "second_card_selected": 45
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            4,
+            7,
+            15,
+            19,
+            22,
+            23,
+            27
+          ],
+          "second_card_selected": 1
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            2,
+            6,
+            12,
+            13,
+            28,
+            29,
+            32
+          ],
+          "second_card_selected": 38
+        }
+      ],
+      [
+        {
+          "ticket": 1,
+          "first_card_selected": [
+            1,
+            2,
+            3,
+            14,
+            22,
+            30,
+            31
+          ],
+          "second_card_selected": 40
+        },
+        {
+          "ticket": 2,
+          "first_card_selected": [
+            0,
+            4,
+            8,
+            13,
+            25,
+            27,
+            32
+          ],
+          "second_card_selected": 11
+        },
+        {
+          "ticket": 3,
+          "first_card_selected": [
+            5,
+            6,
+            7,
+            15,
+            19,
+            20,
+            34
+          ],
+          "second_card_selected": 3
+        },
+        {
+          "ticket": 4,
+          "first_card_selected": [
+            9,
+            10,
+            16,
+            23,
+            26,
+            29,
+            33
+          ],
+          "second_card_selected": 28
+        },
+        {
+          "ticket": 5,
+          "first_card_selected": [
+            11,
+            12,
+            17,
+            18,
+            21,
+            24,
+            28
+          ],
+          "second_card_selected": 34
         }
       ]
     ]
