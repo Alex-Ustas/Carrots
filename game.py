@@ -7,7 +7,8 @@ from storage import (load_all_tickets, load_all_results, load_all_winnings,
                      TICKETS_FILE, RESULTS_FILE, WINNINGS_FILE)
 from widgets import Label, EditBox, Button, ComboList, EditSpin, Window, CardWidget, TEXT_COLOR
 
-import sys, random, re, math
+import sys, random, re
+from math import exp, comb
 from datetime import datetime as dt
 from time import time
 from typing import List, Optional, Dict, Tuple
@@ -19,11 +20,11 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox, QFrame, QTableWidget,
                              QWidget, QRadioButton, QScrollArea, QHeaderView, QTableWidgetItem, QInputDialog,
-                             QListWidget, QTabWidget, QProgressBar, QAbstractItemView)
+                             QListWidget, QTabWidget, QProgressBar, QAbstractItemView, QGroupBox)
 from PyQt6.QtGui import QColor, QIcon
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
-VERSION = '2.03 (2026.10)'
+VERSION = '2.04 (2026.10)'
 
 CARD1_SIZE = 35
 CARD2_SIZE = 54
@@ -1641,7 +1642,7 @@ class StatisticsData:
             self,
             start_date: Optional[dt.date],
             end_date: Optional[dt.date],
-            decay_lambda: float = 0.07
+            decay_lambda: float = 0.03
     ) -> Tuple[List[float], List[float]]:
         """
         Возвращает прогнозные вероятности в процентах для чисел:
@@ -1672,7 +1673,7 @@ class StatisticsData:
                 result = self.results_data.get(d_str)
                 if result:
                     days_ago = end_ordinal - d_date.toordinal()
-                    weight = math.exp(-decay_lambda * days_ago)
+                    weight = exp(-decay_lambda * days_ago)
                     total_weight += weight
 
                     for n1 in result.first_card_selected:
@@ -1690,6 +1691,31 @@ class StatisticsData:
         list_second_card = [(1 - count_card2.get(n, 0) / total_weight) * 100 for n in range(CARD2_SIZE)]
         return list_first_card, list_second_card
 
+    @staticmethod
+    def calculate_probabilities() -> List[Tuple[int, int, float, float]]:
+        """
+        Возвращает список кортежей: (x, y, probability, odds)\n
+        x: совпадения на 1-й карточке (0..7)\n
+        y: 1 — совпадение на 2-й, 0 — несовпадение\n
+        probability: P(x,y)\n
+        odds: 1 / P(x,y) — «1 выигрыш на N билетов»
+        """
+        N1, K1 = CARD1_SIZE, 7
+        N2, K2 = CARD2_SIZE, 1
+
+        results = []
+        for x, y in WINNING_VARIANTS:
+            p1 = comb(K1, x) * comb(N1 - K1, K1 - x) / comb(N1, K1)
+            if y == 1:
+                p2 = K2 / N2
+            else:
+                p2 = (N2 - K2) / N2
+            p = p1 * p2
+            odds = 1.0 / p if p > 0 else float('inf')
+            results.append((x, y, p, odds))
+
+        return results
+
 
 class StatisticWindow(Window):
     FRAME_STYLE = "QFrame {border: 2px solid black; background-color: white;}"
@@ -1703,6 +1729,12 @@ class StatisticWindow(Window):
         self.runs_history: List[Dict] = []  # данные по прогонам для отрисовки графиков
 
         self._stats = StatisticsData(self.results_data, self.ticket_data, self.winning_data)
+
+        # вероятности выигрышей по схемам призов
+        self.winning_probabilities: List[Tuple[int, int, float, float]] = StatisticsData.calculate_probabilities()
+        self._prob_timer = QTimer()
+        self._prob_index = 0
+        self._prob_label: List[Label] = []  # текст по всем вероятностям
 
         self.start_date: Optional[dt.date] = None
         self.end_date: Optional[dt.date] = None
@@ -1744,13 +1776,19 @@ class StatisticWindow(Window):
         main_layout = QVBoxLayout()
 
         # Вкладки
+        tab_widgets = {
+            "Выигрыши": self._build_winnings_tab(),
+            "Эффективность": self._build_efficiency_tab(),
+            "Частота выпадения чисел": self._build_frequency_tab(),
+            "Вероятность выпадения чисел": self._build_prob_tab(),
+            "Прогоны": self._build_runs_tab(),
+            "Вероятности": self._build_win_probs_tab()
+        }
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_winnings_tab(), "Выигрыши")
-        self.tabs.addTab(self._build_efficiency_tab(), "Эффективность")
-        self.tabs.addTab(self._build_frequency_tab(), "Частота выпадения чисел")
-        self.tabs.addTab(self._build_prob_tab(), "Вероятность выпадения чисел")
-        self.tabs.addTab(self._build_runs_tab(), "Прогоны")
+        for name, widget in tab_widgets.items():
+            self.tabs.addTab(widget, name)
         self.tabs.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 14px; font-weight: bold")
+        self.tabs.currentChanged.connect(self._on_tab_changed)  # type: ignore
         main_layout.addWidget(self.tabs, stretch=1)
 
         # Нижняя строка
@@ -1788,6 +1826,27 @@ class StatisticWindow(Window):
 
         self.get_init_dates()
         self.refresh_all()
+
+    def _on_tab_changed(self, index: int):
+        if index == 5:
+            self._animate_probabilities()
+        else:
+            [lbl.setVisible(False) for lbl in self._prob_label]
+
+    def _animate_probabilities(self) -> None:
+        """Последовательно показывает лейблы с шагом 0.1 секунды."""
+        self._prob_index = 0
+        self._prob_timer.setInterval(100)
+        self._prob_timer.timeout.connect(self._step_prob_label)  # type: ignore
+        self._prob_timer.start()
+
+    def _step_prob_label(self) -> None:
+        if self._prob_index >= len(self.winning_probabilities):
+            self._prob_timer.stop()
+            self._prob_timer.timeout.disconnect()  # type: ignore
+            return
+        self._prob_label[self._prob_index].setVisible(True)
+        self._prob_index += 1
 
     def _build_winnings_tab(self) -> QWidget:
         tab = QWidget()
@@ -1922,6 +1981,30 @@ class StatisticWindow(Window):
 
         return tab
 
+    def _build_win_probs_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        group_box = QGroupBox("Шансы выиграть по вариантам")
+        self.group_win_probs_layout = QVBoxLayout()
+        self.group_win_probs_layout.setSpacing(6)
+
+        for x, y, _, odds in self.winning_probabilities:
+            coincidence_text = choose_plural(x, ('совпадение', 'совпадения', 'совпадений'))
+            odds_text = f'{odds:.1f}' if odds < 100 else f'{int(odds):,d}'
+            text = f'{coincidence_text} в первой карточке' if x else ''
+            text += ' и ' if x and y else ''
+            text += 'совпадение во второй' if y else ''
+            text += f' — 1 шанс из {odds_text} билетов'
+            lbl = Label(text)
+            lbl.setVisible(False)
+            self._prob_label.append(lbl)
+            self.group_win_probs_layout.addWidget(lbl)
+
+        group_box.setLayout(self.group_win_probs_layout)
+        layout.addWidget(group_box)
+        return tab
+
     def _wrap_in_frame(self, canvas: FigureCanvas) -> QFrame:
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -2049,6 +2132,134 @@ class StatisticWindow(Window):
         data = self.runs_history[row]
         self._draw_runs_chart(data)
 
+    # --- Вычисления ---
+
+    def _calculate_data_for_runs(self) -> Optional[Dict]:
+        win_scheme_name = self.win_combo.currentText()
+        if not win_scheme_name or win_scheme_name not in self.winning_data:
+            QMessageBox.warning(self, "Ошибка", "Выберите корректную схему призов!")
+            return None
+
+        win_scheme = self.winning_data[win_scheme_name]
+        cost_per_ticket = self.cost_spin.value()
+        n_tickets = self.q_spin.value()
+        n_runs = self.runs_spin.value()
+
+        if n_tickets <= 0 or n_runs <= 0 or cost_per_ticket <= 0:
+            QMessageBox.warning(self, "Ошибка", "Количество билетов, прогонов и цена должны быть > 0!")
+            return None
+
+        start_time = time()
+        total_tickets_all_runs = n_tickets * n_runs
+        show_progress = total_tickets_all_runs > 49_999
+
+        self.progress_bar.setVisible(show_progress)
+        if show_progress:
+            self.progress_bar.setValue(0)
+            QApplication.processEvents()
+
+        # --- По каждому варианту (x,y) будем хранить список процентов по прогонам ---
+        variant_percentages: Dict[Tuple[int, int], List[float]] = {v: [] for v in WINNING_VARIANTS}
+
+        total_spent_all_runs = 0
+        total_won_m_all_runs = 0
+        total_won_b_all_runs = 0
+        total_winning_tickets = 0
+
+        processed = 0  # текущее показание прогресс-бара
+
+        # --- Прогоны ---
+        for run_idx in range(n_runs):
+            # --- Генерируем один случайный "результат" розыгрыша ---
+            random_first = random.sample(range(CARD1_SIZE), 7)
+            random_second = random.randint(0, CARD2_SIZE - 1)
+            dummy_result = Result(date="_dummy_", win_set=win_scheme_name,
+                                  first_card_selected=random_first, second_card_selected=random_second)
+
+            # Генерируем n_tickets билетов: у каждого 7 чисел из 0..34 + 1 число 0..53
+            tickets = []
+            for _ in range(n_tickets):
+                t_first = random.sample(range(CARD1_SIZE), 7)
+                t_second = random.randint(0, CARD2_SIZE - 1)
+                tickets.append(Ticket(ticket=0, first_card_selected=t_first, second_card_selected=t_second))
+
+            # Считаем выигрыши для этого набора билетов по одному результату
+            won_m, won_b, spent = dummy_result.calculate_winnings_for_tickets(win_scheme,
+                                                                              TicketSets(date="_dummy_",
+                                                                                         cost=cost_per_ticket,
+                                                                                         win_set=win_scheme_name,
+                                                                                         sets=[tickets]))
+
+            total_spent_all_runs += spent
+            total_won_m_all_runs += won_m
+            total_won_b_all_runs += won_b
+
+            # Для каждого варианта считаем процент выигрышных билетов от общего числа
+            variant_counts: Dict[Tuple[int, int], int] = {v: 0 for v in WINNING_VARIANTS}
+            for t in tickets:
+                x = len(set(t.first_card_selected) & set(dummy_result.first_card_selected))
+                y = 1 if t.second_card_selected == dummy_result.second_card_selected else 0
+                key = (x, y)
+                if key in variant_counts:
+                    variant_counts[key] += 1
+
+            total_winning_tickets += sum(variant_counts.values())
+
+            for v in WINNING_VARIANTS:
+                pct = (variant_counts[v] / n_tickets) * 100.0 if n_tickets > 0 else 0.0
+                variant_percentages[v].append(pct)
+
+            # Обновление прогресс-бара
+            if show_progress:
+                run_percent = min(100, int((run_idx + 1) / n_runs * 100))
+                if processed < run_percent:
+                    self.progress_bar.setValue(run_percent)
+                    processed = run_percent
+                    QApplication.processEvents()
+
+        if show_progress:
+            self.progress_bar.setValue(100)
+            QApplication.processEvents()
+            self.progress_bar.setVisible(False)
+
+        # Считаем статистику по вариантам
+        variants_data = []
+        for v in WINNING_VARIANTS:
+            vals = variant_percentages[v]
+            if not vals:
+                continue
+            mn = min(vals)
+            mx = max(vals)
+            avg = sum(vals) / len(vals)
+            variants_data.append((v, mn, mx, avg))
+
+        # Эффективность и общий процент выигрыша
+        total_revenue_points = total_won_m_all_runs + total_won_b_all_runs * 50
+        efficiency = total_revenue_points / total_spent_all_runs if total_spent_all_runs > 0 else 0.0
+        overall_win_points = (
+            (total_winning_tickets / total_tickets_all_runs) * 100
+            if total_tickets_all_runs else 0.0
+        )
+
+        # --- Расчет времени исполнения ---
+        end_time = time() - start_time
+        time_str = 'с'
+        if end_time > 60:
+            end_time /= 60
+            time_str = 'м'
+        time_str = f"{end_time:.2f}{time_str}"
+
+        return {
+            "win_scheme_name": win_scheme_name,
+            "cost_per_ticket": cost_per_ticket,
+            "n_tickets": n_tickets,
+            "n_runs": n_runs,
+            "efficiency": efficiency,
+            "overall_win_points": overall_win_points,
+            "variants_data": variants_data,  # данные для графика
+            "time": time_str
+        }
+
     # --- Перерисовка графиков ---
 
     def refresh_all(self):
@@ -2093,13 +2304,7 @@ class StatisticWindow(Window):
             label="Морковки",
             zorder=3,
         )
-        ax1.fill_between(
-            self._cached_dates,
-            self._cached_wins_m,
-            alpha=0.1,
-            color=color_m,
-            zorder=2,
-        )
+        ax1.fill_between(self._cached_dates, self._cached_wins_m, alpha=0.1, color=color_m, zorder=2)
         ax1.set_xlabel("Дата розыгрыша", fontsize=12, fontweight="bold")
         ax1.set_ylabel("Морковки", fontsize=12, color=color_m, fontweight="bold")
         ax1.tick_params(axis="y", labelcolor=color_m)
@@ -2176,21 +2381,8 @@ class StatisticWindow(Window):
             label="Эффективность",
             zorder=3,
         )
-        ax.fill_between(
-            self._cached_dates,
-            efficiency,
-            alpha=0.1,
-            color=color_eff,
-            zorder=2,
-        )
-        ax.axhline(
-            y=1.0,
-            color="red",
-            linestyle="--",
-            linewidth=1.5,
-            label="Безубыточность (1.0)",
-            zorder=2,
-        )
+        ax.fill_between(self._cached_dates, efficiency, alpha=0.1, color=color_eff, zorder=2)
+        ax.axhline(y=1.0, color="red", linestyle="--", linewidth=1.5, label="Безубыточность (1.0)", zorder=2)
 
         ax.set_xlabel("Дата розыгрыша", fontsize=12, fontweight="bold")
         ax.set_ylabel("Эффективность", fontsize=12, color=color_eff, fontweight="bold")
@@ -2347,132 +2539,6 @@ class StatisticWindow(Window):
 
         self.figure_prob_card2.tight_layout()
         self.canvas_prob_card2.draw()
-
-    def _calculate_data_for_runs(self) -> Optional[Dict]:
-        win_scheme_name = self.win_combo.currentText()
-        if not win_scheme_name or win_scheme_name not in self.winning_data:
-            QMessageBox.warning(self, "Ошибка", "Выберите корректную схему призов!")
-            return None
-
-        win_scheme = self.winning_data[win_scheme_name]
-        cost_per_ticket = self.cost_spin.value()
-        n_tickets = self.q_spin.value()
-        n_runs = self.runs_spin.value()
-
-        if n_tickets <= 0 or n_runs <= 0 or cost_per_ticket <= 0:
-            QMessageBox.warning(self, "Ошибка", "Количество билетов, прогонов и цена должны быть > 0!")
-            return None
-
-        start_time = time()
-        total_tickets_all_runs = n_tickets * n_runs
-        show_progress = total_tickets_all_runs > 49_999
-
-        self.progress_bar.setVisible(show_progress)
-        if show_progress:
-            self.progress_bar.setValue(0)
-            QApplication.processEvents()
-
-        # --- По каждому варианту (x,y) будем хранить список процентов по прогонам ---
-        variant_percentages: Dict[Tuple[int, int], List[float]] = {v: [] for v in WINNING_VARIANTS}
-
-        total_spent_all_runs = 0
-        total_won_m_all_runs = 0
-        total_won_b_all_runs = 0
-        total_winning_tickets = 0
-
-        processed = 0  # текущее показание прогресс-бара
-
-        # --- Прогоны ---
-        for run_idx in range(n_runs):
-            # --- Генерируем один случайный "результат" розыгрыша ---
-            random_first = random.sample(range(CARD1_SIZE), 7)
-            random_second = random.randint(0, CARD2_SIZE - 1)
-            dummy_result = Result(date="_dummy_", win_set=win_scheme_name,
-                                  first_card_selected=random_first, second_card_selected=random_second)
-
-            # Генерируем n_tickets билетов: у каждого 7 чисел из 0..34 + 1 число 0..53
-            tickets = []
-            for _ in range(n_tickets):
-                t_first = random.sample(range(CARD1_SIZE), 7)
-                t_second = random.randint(0, CARD2_SIZE - 1)
-                tickets.append(Ticket(ticket=0, first_card_selected=t_first, second_card_selected=t_second))
-
-            # Считаем выигрыши для этого набора билетов по одному результату
-            won_m, won_b, spent = dummy_result.calculate_winnings_for_tickets(win_scheme,
-                                                                              TicketSets(date="_dummy_",
-                                                                                         cost=cost_per_ticket,
-                                                                                         win_set=win_scheme_name,
-                                                                                         sets=[tickets]))
-
-            total_spent_all_runs += spent
-            total_won_m_all_runs += won_m
-            total_won_b_all_runs += won_b
-
-            # Для каждого варианта считаем процент выигрышных билетов от общего числа
-            variant_counts: Dict[Tuple[int, int], int] = {v: 0 for v in WINNING_VARIANTS}
-            for t in tickets:
-                x = len(set(t.first_card_selected) & set(dummy_result.first_card_selected))
-                y = 1 if t.second_card_selected == dummy_result.second_card_selected else 0
-                key = (x, y)
-                if key in variant_counts:
-                    variant_counts[key] += 1
-
-            total_winning_tickets += sum(variant_counts.values())
-
-            for v in WINNING_VARIANTS:
-                pct = (variant_counts[v] / n_tickets) * 100.0 if n_tickets > 0 else 0.0
-                variant_percentages[v].append(pct)
-
-            # Обновление прогресс-бара
-            if show_progress:
-                run_percent = min(100, int((run_idx + 1) / n_runs * 100))
-                if processed < run_percent:
-                    self.progress_bar.setValue(run_percent)
-                    processed = run_percent
-                    QApplication.processEvents()
-
-        if show_progress:
-            self.progress_bar.setValue(100)
-            QApplication.processEvents()
-            self.progress_bar.setVisible(False)
-
-        # Считаем статистику по вариантам
-        variants_data = []
-        for v in WINNING_VARIANTS:
-            vals = variant_percentages[v]
-            if not vals:
-                continue
-            mn = min(vals)
-            mx = max(vals)
-            avg = sum(vals) / len(vals)
-            variants_data.append((v, mn, mx, avg))
-
-        # Эффективность и общий процент выигрыша
-        total_revenue_points = total_won_m_all_runs + total_won_b_all_runs * 50
-        efficiency = total_revenue_points / total_spent_all_runs if total_spent_all_runs > 0 else 0.0
-        overall_win_points = (
-            (total_winning_tickets / total_tickets_all_runs) * 100
-            if total_tickets_all_runs else 0.0
-        )
-
-        # --- Расчет времени исполнения ---
-        end_time = time() - start_time
-        time_str = 'с'
-        if end_time > 60:
-            end_time /= 60
-            time_str = 'м'
-        time_str = f"{end_time:.2f}{time_str}"
-
-        return {
-            "win_scheme_name": win_scheme_name,
-            "cost_per_ticket": cost_per_ticket,
-            "n_tickets": n_tickets,
-            "n_runs": n_runs,
-            "efficiency": efficiency,
-            "overall_win_points": overall_win_points,
-            "variants_data": variants_data,  # данные для графика
-            "time": time_str
-        }
 
     def _draw_runs_chart(self, data: Optional[Dict] = None):
         """
