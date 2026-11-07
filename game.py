@@ -482,7 +482,7 @@ class TicketWindow(Window):
         for idx in range(len(self.tickets_data[self.current_date].sets)):
             if idx != self.current_set_index:
                 for num in [t.second_card_selected for t in self.tickets_data[self.current_date].sets[idx]]:
-                    if 0 <= num < CARD2_SIZE:
+                    if num is not None and 0 <= num < CARD2_SIZE:
                         change_style(self.card2.buttons[num], 'color', 'green')
 
     def _set_color(self, idx: int):
