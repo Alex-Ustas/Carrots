@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import Qt, QTimer
 
-VERSION = '2.04 (2026.10)'
+VERSION = '2.05 (2026.11)'
 
 CARD1_SIZE = 35
 CARD2_SIZE = 54
@@ -45,13 +45,12 @@ RESULT_COLOR = QColor("#FFC000")
 
 class WelcomeWindow(Window):
     def __init__(self):
-        super().__init__('Carrots', height=270)
-        self.window: Optional[WelcomeWindow] = None
+        super().__init__('Морковск!', height=270)
         self._init_ui()
 
     def _init_ui(self):
         button_input = Button('Билеты', fixed_height=50)
-        button_input.clicked.connect(self.open_input_data_window)
+        button_input.clicked.connect(self.open_tickets_window)
         button_results = Button('Результаты', fixed_height=50)
         button_results.clicked.connect(self.open_results_window)
         button_winning = Button('Схемы призов', fixed_height=50)
@@ -69,25 +68,21 @@ class WelcomeWindow(Window):
         main_v_layout.addWidget(button_about)
         self.setLayout(main_v_layout)
 
-    def open_input_data_window(self):
-        self.window = TicketWindow()
-        self.window.show()
-        self.close()
+    @staticmethod
+    def open_tickets_window():
+        Window.open_or_activate(TicketWindow)
 
-    def open_results_window(self):
-        self.window = ResultWindow()
-        self.window.show()
-        self.close()
+    @staticmethod
+    def open_results_window():
+        Window.open_or_activate(ResultWindow)
 
-    def open_winning_window(self):
-        self.window = WinningWindow()
-        self.window.show()
-        self.close()
+    @staticmethod
+    def open_winning_window():
+        Window.open_or_activate(WinningWindow)
 
-    def open_stat_window(self):
-        self.window = StatisticWindow()
-        self.window.show()
-        self.close()
+    @staticmethod
+    def open_stat_window():
+        Window.open_or_activate(StatisticWindow)
 
     def on_click_about(self):
         name = [1060, 1072, 1076, 1077, 1080, 1095, 1077, 1074, 32, 1040, 1083, 1077, 1082, 1089, 1072, 1085, 1076,
@@ -120,9 +115,6 @@ class TicketWindow(Window):
         # Рабочее состояние: 0 = пусто, 1..5 = цвет (номер билета)
         self.first_card: List[int] = [0] * CARD1_SIZE
         self.second_card: List[int] = [0] * CARD2_SIZE
-
-        self.check_on_close: bool = True  # исключение повторной проверки при закрытии окна
-        self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
         self._refresh_dates()
@@ -267,6 +259,7 @@ class TicketWindow(Window):
     def _on_date_changed(self, text: str):
         new_date = text.strip() if text else None
         old_date = self.current_date
+        self.current_set_index = 0
         self.current_date = new_date
         self.excluded_nums = self.calc_top_nums()
         self.check_changes(old_date)
@@ -738,16 +731,12 @@ class TicketWindow(Window):
                 self.on_save(old_date)
 
     def closeEvent(self, event):
-        if self.check_on_close:
-            self.check_changes(self.current_date)
-        event.accept()
-
-    def open_main_window(self):
         self.check_changes(self.current_date)
-        self.check_on_close = False
-        self.window = WelcomeWindow()
-        self.window.show()
-        self.close()
+        super().closeEvent(event)
+
+    @staticmethod
+    def open_main_window():
+        Window.open_or_activate(WelcomeWindow)
 
 
 class ResultWindow(Window):
@@ -761,9 +750,6 @@ class ResultWindow(Window):
         # Состояние результата: выбранные ячейки
         self.result_first: set = set()
         self.result_second: Optional[int] = None
-
-        self.check_on_close: bool = True  # исключение повторной проверки при закрытии окна
-        self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
 
@@ -1114,16 +1100,12 @@ class ResultWindow(Window):
             self.on_save(old_date)
 
     def closeEvent(self, event):
-        if self.check_on_close:
-            self.check_changes(self.current_date)
-        event.accept()
-
-    def open_main_window(self):
         self.check_changes(self.current_date)
-        self.check_on_close = False
-        self.window = WelcomeWindow()
-        self.window.show()
-        self.close()
+        super().closeEvent(event)
+
+    @staticmethod
+    def open_main_window(self):
+        Window.open_or_activate(WelcomeWindow)
 
 
 class WinningWindow(Window):
@@ -1134,8 +1116,6 @@ class WinningWindow(Window):
         self.results_data: Dict[str, Result] = load_all_results()
         self.original_data = None
         self.trigger_to_save = False  # при любом изменении становится True
-
-        self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
 
@@ -1504,32 +1484,23 @@ class WinningWindow(Window):
 
     def closeEvent(self, event):
         if not self.trigger_to_save:
-            event.accept()
+            super().closeEvent(event)
             return
         reply = QMessageBox.question(self, 'Данные изменены',
                                      f'Есть изменения в данных!\nСохранить изменения перед выходом?',
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.on_save_winning()
-            event.accept()
+            super().closeEvent(event)
         elif reply == QMessageBox.StandardButton.No:
             self.trigger_to_save = True
-            event.accept()
+            super().closeEvent(event)
         else:
             event.ignore()
 
+    @staticmethod
     def open_main_window(self):
-        if self.trigger_to_save:
-            reply = QMessageBox.question(self, 'Данные изменены',
-                                         f'Есть изменения в данных!\nСохранить изменения перед выходом?',
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                self.on_save_winning()
-
-        self.trigger_to_save = False
-        self.window = WelcomeWindow()
-        self.window.show()
-        self.close()
+        Window.open_or_activate(WelcomeWindow)
 
 
 class StatisticsData:
@@ -1765,8 +1736,6 @@ class StatisticWindow(Window):
 
         self.figure_runs = plt.Figure(figsize=(12, 6), dpi=100)
         self.canvas_runs = FigureCanvas(self.figure_runs)
-
-        self.window: Optional[WelcomeWindow] = None
 
         self._init_ui()
 
@@ -2605,10 +2574,9 @@ class StatisticWindow(Window):
         )
         ax.axis("off")
 
-    def open_main_window(self):
-        self.window = WelcomeWindow()
-        self.window.show()
-        self.close()
+    @staticmethod
+    def open_main_window():
+        Window.open_or_activate(WelcomeWindow)
 
 
 def change_style(widget, parameter: str, value: str):

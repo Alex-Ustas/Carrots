@@ -1,7 +1,7 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QComboBox, QSpinBox, QLineEdit, QGridLayout, QFrame
 from PyQt6.QtGui import QIcon, QColor
-from PyQt6.QtCore import QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 
 TEXT_COLOR = '#203764'  # тёмно-синий
 
@@ -140,11 +140,15 @@ class CardWidget(QFrame):
 
 
 class Window(QWidget):
+    # Реестр открытых окон: {имя_класса: экземпляр_окна}
+    _open_windows: Dict[str, "Window"] = {}
+
     def __init__(self, text: str, width=300, height=300):
         super().__init__()
         self.setMinimumSize(width, height)
         self.setWindowTitle(text)
         self.setWindowIcon(QIcon('images/carrots.png'))
+        Window._open_windows[type(self).__name__] = self
 
     def delete_widgets(self, layout):
         while layout.count() > 0:
@@ -157,3 +161,29 @@ class Window(QWidget):
             if child_layout is not None:
                 self.delete_widgets(child_layout)
                 child_layout.deleteLater()
+
+    @classmethod
+    def open_or_activate(cls, window_class: type, *args, **kwargs) -> "Window":
+        """
+        Если окно данного класса уже открыто — активирует его.
+        Иначе — создаёт и показывает новое.
+        Само вызывающее окно НЕ закрывается.
+        """
+        key = window_class.__name__
+
+        existing = cls._open_windows.get(key)
+        if existing is not None:
+            if not existing.isVisible():
+                existing.show()
+            existing.setWindowState(existing.windowState() & ~Qt.WindowState.WindowMinimized)
+            existing.raise_()  # поднять поверх других окон
+            existing.activateWindow()  # дать фокус ввода
+            return existing
+
+        window = window_class(*args, **kwargs)
+        window.show()
+        return window
+
+    def closeEvent(self, event) -> None:
+        Window._open_windows.pop(type(self).__name__, None)
+        super().closeEvent(event)

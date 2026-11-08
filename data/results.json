@@ -614,5 +614,33 @@
       34
     ],
     "second_card_selected": 8
+  },
+  {
+    "date": "02.11.26",
+    "win_set": "05-10-26",
+    "first_card_selected": [
+      1,
+      4,
+      7,
+      9,
+      11,
+      14,
+      32
+    ],
+    "second_card_selected": 39
+  },
+  {
+    "date": "05.11.26",
+    "win_set": "05-10-26",
+    "first_card_selected": [
+      5,
+      12,
+      16,
+      18,
+      19,
+      20,
+      22
+    ],
+    "second_card_selected": 44
   }
 ]
