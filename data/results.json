@@ -642,5 +642,19 @@
       22
     ],
     "second_card_selected": 44
+  },
+  {
+    "date": "09.11.26",
+    "win_set": "05-10-26",
+    "first_card_selected": [
+      1,
+      8,
+      10,
+      16,
+      22,
+      26,
+      33
+    ],
+    "second_card_selected": 17
   }
 ]

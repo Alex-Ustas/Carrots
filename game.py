@@ -1,4 +1,6 @@
 # TODO:
+#  - перенести подсчет выигрышных билетов в отдельную функцию
+#  - добавить cost_per_point (цена за балл), учитывать в статистике
 
 from funcs import *
 from models import Ticket, TicketSets, Result, Winning
@@ -24,7 +26,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout, QMessageBox
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import Qt, QTimer
 
-VERSION = '2.05 (2026.11)'
+VERSION = '2.06 (2026.11)'
 
 CARD1_SIZE = 35
 CARD2_SIZE = 54
@@ -32,6 +34,7 @@ WINNING_VARIANTS = [
     (2, 0), (3, 0), (4, 0), (1, 1), (0, 1), (2, 1), (3, 1),
     (5, 0), (4, 1), (6, 0), (5, 1), (6, 1), (7, 0), (7, 1)
 ]
+COST_PER_POINT = 50
 
 COLORS = [
     QColor("#9ac87d"),  # 1 — светло-зелёный
@@ -49,23 +52,19 @@ class WelcomeWindow(Window):
         self._init_ui()
 
     def _init_ui(self):
-        button_input = Button('Билеты', fixed_height=50)
-        button_input.clicked.connect(self.open_tickets_window)
-        button_results = Button('Результаты', fixed_height=50)
-        button_results.clicked.connect(self.open_results_window)
-        button_winning = Button('Схемы призов', fixed_height=50)
-        button_winning.clicked.connect(self.open_winning_window)
-        button_stat = Button('Статистика', fixed_height=50)
-        button_stat.clicked.connect(self.open_stat_window)
-        button_about = Button('О программе', fixed_height=50)
-        button_about.clicked.connect(self.on_click_about)
-
+        buttons = {
+            'Билеты': self.open_tickets_window,
+            'Результаты': self.open_results_window,
+            'Схемы призов': self.open_winning_window,
+            'Статистика': self.open_stat_window,
+            'О программе': self.on_click_about,
+            'Закрыть всё': self.close_all
+        }
         main_v_layout = QVBoxLayout()
-        main_v_layout.addWidget(button_input)
-        main_v_layout.addWidget(button_results)
-        main_v_layout.addWidget(button_winning)
-        main_v_layout.addWidget(button_stat)
-        main_v_layout.addWidget(button_about)
+        for name, func in buttons.items():
+            button = Button(name, fixed_height=50)
+            button.clicked.connect(func)
+            main_v_layout.addWidget(button)
         self.setLayout(main_v_layout)
 
     @staticmethod
@@ -96,6 +95,14 @@ class WelcomeWindow(Window):
         <p><b>Версия:</b> {VERSION}</p>
         """
         QMessageBox.information(self, 'О программе', html_text)
+
+    def close_all(self):
+        open_windows = list(Window._open_windows)
+        for name in open_windows:
+            if name != 'WelcomeWindow':
+                widget = Window._open_windows[name]
+                widget.close()
+        self.close()
 
 
 class TicketWindow(Window):
@@ -1715,6 +1722,7 @@ class StatisticWindow(Window):
         self._cached_wins_m: List[int] = []
         self._cached_wins_b: List[int] = []
         self._cached_spent: List[float] = []
+        self._stat_label: List[Label] = [Label('') for _ in range(7)]  # текст по всей статистике
 
         self.figure_winnings = plt.Figure(figsize=(12, 6), dpi=100)
         self.canvas_winnings = FigureCanvas(self.figure_winnings)
@@ -1751,7 +1759,8 @@ class StatisticWindow(Window):
             "Частота выпадения чисел": self._build_frequency_tab(),
             "Вероятность выпадения чисел": self._build_prob_tab(),
             "Прогоны": self._build_runs_tab(),
-            "Вероятности": self._build_win_probs_tab()
+            "Вероятности": self._build_win_probs_tab(),
+            "Статистика": self._build_general_stats_tab()
         }
         self.tabs = QTabWidget()
         for name, widget in tab_widgets.items():
@@ -1836,7 +1845,7 @@ class StatisticWindow(Window):
         self.canvas_efficiency.mpl_connect("motion_notify_event", self.on_motion_in_efficiency)
         layout.addWidget(self._wrap_in_frame(self.canvas_efficiency), stretch=1)
 
-        self.lbl_hover_efficiency = Label("Эффективность = (морковки + баллы × 50) / затраты")
+        self.lbl_hover_efficiency = Label(f"Эффективность = (морковки + баллы × {COST_PER_POINT}) / затраты")
         layout.addWidget(self.lbl_hover_efficiency)
 
         return tab
@@ -1924,7 +1933,6 @@ class StatisticWindow(Window):
         headers = ["Схема", "Цена", "Билетов", "Прогонов", "Эфф-ть", "win %", "Время"]
         self.runs_table.setHorizontalHeaderLabels(headers)
         self.runs_table.setStyleSheet(f'color: {TEXT_COLOR}; font-size: 12px')
-        # self.runs_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.runs_table.setColumnWidth(0, 60)
         self.runs_table.setColumnWidth(1, 40)
         self.runs_table.setColumnWidth(2, 60)
@@ -1955,8 +1963,8 @@ class StatisticWindow(Window):
         layout = QVBoxLayout(tab)
 
         group_box = QGroupBox("Шансы выиграть по вариантам")
-        self.group_win_probs_layout = QVBoxLayout()
-        self.group_win_probs_layout.setSpacing(6)
+        group_win_probs_layout = QVBoxLayout()
+        group_win_probs_layout.setSpacing(6)
 
         for x, y, _, odds in self.winning_probabilities:
             coincidence_text = choose_plural(x, ('совпадение', 'совпадения', 'совпадений'))
@@ -1968,10 +1976,27 @@ class StatisticWindow(Window):
             lbl = Label(text)
             lbl.setVisible(False)
             self._prob_label.append(lbl)
-            self.group_win_probs_layout.addWidget(lbl)
+            group_win_probs_layout.addWidget(lbl)
 
-        group_box.setLayout(self.group_win_probs_layout)
+        group_box.setLayout(group_win_probs_layout)
         layout.addWidget(group_box)
+        return tab
+
+    def _build_general_stats_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        group_box = QGroupBox("Статистика за период")
+        group_win_general_stats_layout = QVBoxLayout()
+        group_win_general_stats_layout.setSpacing(6)
+
+        # Данные для статистики
+        for l in self._stat_label:
+            group_win_general_stats_layout.addWidget(l)
+
+        group_box.setLayout(group_win_general_stats_layout)
+        layout.addWidget(group_box)
+        layout.addStretch()
         return tab
 
     def _wrap_in_frame(self, canvas: FigureCanvas) -> QFrame:
@@ -2050,7 +2075,7 @@ class StatisticWindow(Window):
         xvals = [date2num(d) for d in self._cached_dates]
         idx = self._find_closest_index(event, xvals)
         if idx is None:
-            self.lbl_hover_efficiency.setText("Эффективность = (морковки + баллы × 50) / затраты")
+            self.lbl_hover_efficiency.setText(f"Эффективность = (морковки + баллы × {COST_PER_POINT}) / затраты")
             return
 
         date_str = self._cached_dates[idx].strftime(DATE_FORMAT)
@@ -2058,14 +2083,14 @@ class StatisticWindow(Window):
         b_val = self._cached_wins_b[idx]
         s = self._cached_spent[idx]
         total_m = sum(self._cached_wins_m)
-        total_b = sum(self._cached_wins_b) * 50
+        total_b = sum(self._cached_wins_b) * COST_PER_POINT
         total_s = sum(self._cached_spent)
 
         eff = (m_val + b_val * 50) / s if s > 0 else 0
-        total_eff = (total_m + total_b) / total_s if total_s > 0 else 0
+        total_eff = (total_m + total_b) / total_s if total_s > 0 else 0.0
 
         text_m = f"{m_val}🥕" if m_val else ""
-        text_b = f"{b_val}💵 × 50" if b_val else ""
+        text_b = f"{b_val}💵 × {COST_PER_POINT}" if b_val else ""
         if not text_m and not text_b:
             text_num = "0"
         else:
@@ -2203,7 +2228,7 @@ class StatisticWindow(Window):
             variants_data.append((v, mn, mx, avg))
 
         # Эффективность и общий процент выигрыша
-        total_revenue_points = total_won_m_all_runs + total_won_b_all_runs * 50
+        total_revenue_points = total_won_m_all_runs + total_won_b_all_runs * COST_PER_POINT
         efficiency = total_revenue_points / total_spent_all_runs if total_spent_all_runs > 0 else 0.0
         overall_win_points = (
             (total_winning_tickets / total_tickets_all_runs) * 100
@@ -2251,6 +2276,7 @@ class StatisticWindow(Window):
         self._draw_efficiency_chart()
         self._draw_frequency_charts()
         self._draw_prob_charts()
+        self._draw_general_statistic()
 
     def _draw_winnings_chart(self):
         self.figure_winnings.clear()
@@ -2332,7 +2358,7 @@ class StatisticWindow(Window):
             return
 
         efficiency = [
-            (m + b * 50) / s if s > 0 else 0
+            (m + b * COST_PER_POINT) / s if s > 0 else 0
             for m, b, s in zip(self._cached_wins_m, self._cached_wins_b, self._cached_spent)
         ]
         top = min((max([1.5] + efficiency), 5)) * 1.2  # установка верхнего предела от 1.8 до 6
@@ -2558,6 +2584,52 @@ class StatisticWindow(Window):
 
         self.figure_runs.tight_layout()
         self.canvas_runs.draw()
+
+    def _draw_general_statistic(self):
+        dates = [d.strftime(DATE_FORMAT) for d in self._cached_dates]
+        total_m = sum(self._cached_wins_m)
+        total_b = sum(self._cached_wins_b) * COST_PER_POINT
+        total_s = sum(self._cached_spent)
+        total_eff = (total_m + total_b) / total_s if total_s else 0.0
+
+        days = sum([1 for d in self.results_data if self.start_date <= StatisticsData.parse_date(d) <= self.end_date])
+        text = f'Розыгрышей: {days}'
+        self._stat_label[0].setText(text)
+
+        text = f'Участие в розыгрышах: {len(set(self.ticket_data) & set(dates))}'
+        self._stat_label[1].setText(text)
+
+        tickets = tickets_win = 0
+        for date_str in dates:
+            if date_str in self.ticket_data:
+                ticket_sets = self.ticket_data[date_str].sets
+                tickets += sum([1 for s in ticket_sets for t in s if t.is_valid()])
+                if date_str in self.results_data:
+                    result = self.results_data[date_str]
+                    for s in ticket_sets:
+                        for ticket in s:
+                            if ticket.is_valid():
+                                ticket_first = set(ticket.first_card_selected)
+                                x = len(ticket_first & set(result.first_card_selected))
+                                y = 1 if (ticket.second_card_selected is not None and
+                                          ticket.second_card_selected == result.second_card_selected) else 0
+                                if x >= 2 or y >= 1:
+                                    tickets_win += 1
+        percent = tickets_win / tickets * 100 if tickets else 0
+        text = f'Участвовало билетов: {tickets}'
+        self._stat_label[2].setText(text)
+
+        text = f'Билетов с выигрышем: {tickets_win} ({round(percent, 2):.2f}%)'
+        self._stat_label[3].setText(text)
+
+        text = f'Потрачено: {total_s} 🥕'
+        self._stat_label[4].setText(text)
+
+        text = f'Выиграно: {total_m} 🥕, {total_b // COST_PER_POINT} 💵'
+        self._stat_label[5].setText(text)
+
+        text = f'Эффективность: {total_eff:.2f}'
+        self._stat_label[6].setText(text)
 
     @staticmethod
     def _draw_empty(figure, text: str):
